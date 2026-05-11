@@ -1,4 +1,5 @@
 import {Bee} from '@ethersphere/bee-js'
+import {join} from 'node:path'
 import type {ProviderConfig} from '../../lib/config'
 import {
   claimJob,
@@ -15,10 +16,12 @@ import {PssTransport} from '../../lib/swarm'
 import {providerTopic} from '../../lib/envelope'
 import {PassthroughCipher} from '../../lib/crypto'
 import {JobPostedIndex} from '../../lib/job-index'
+import {JobsDb} from '../../lib/jobs-db'
 import {OllamaClient} from '../../lib/ollama'
 import {pssPubKeyFromWallet} from '../../lib/keys'
 import type {Hex, ModelOffering} from '../../lib/types'
-import {processJob} from './worker'
+import {startAdminServer} from './admin'
+import {processJob, type WorkerProgress} from './worker'
 import {JobQueue, isJobNotify} from './listener'
 
 const PROVIDER_INITIAL_STAKE = 100n * 10n ** 18n // 100 xBZZ
@@ -77,8 +80,27 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
   const ollama = new OllamaClient(cfg.OLLAMA_URL)
   const jobIndex = new JobPostedIndex(chain, chain.address, log)
   jobIndex.start()
+  const db = new JobsDb({path: join(cfg.T4T_DATA_DIR, 'jobs.db')})
   const signMessage = async (msg: string) =>
     (await chain.wallet.signMessage({account: chain.wallet.account!, message: msg})) as Hex
+
+  function persistProgress(p: WorkerProgress): void {
+    const status = p.stage === 'acked' ? 'running' : p.stage === 'inferred' ? 'running' : 'delivered'
+    db.recordProviderJob({
+      jobId: p.jobIdRouting,
+      client: p.client,
+      modelId: p.modelId,
+      status,
+      receivedAt: p.timestamp, // overridden by COALESCE on upsert
+      ackedAt: p.stage === 'acked' ? p.timestamp : null,
+      completedAt: p.stage === 'delivered' ? p.timestamp : null,
+      claimedAt: null,
+      promptTokens: p.promptTokens ?? null,
+      completionTokens: p.completionTokens ?? null,
+      earnedXBZZ: null,
+      errorMessage: null,
+    })
+  }
 
   pss.subscribe({
     topic: providerTopic(chain.address),
@@ -88,6 +110,21 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
         log.warn({inFlight: queue.inFlight}, 'queue full; dropping notify')
         return
       }
+      const jobIdRouting = env.body.jobId
+      db.recordProviderJob({
+        jobId: jobIdRouting,
+        client: env.from,
+        modelId: env.body.modelId,
+        status: 'queued',
+        receivedAt: Math.floor(Date.now() / 1000),
+        ackedAt: null,
+        completedAt: null,
+        claimedAt: null,
+        promptTokens: null,
+        completionTokens: null,
+        earnedXBZZ: null,
+        errorMessage: null,
+      })
       try {
         await processJob(
           {
@@ -103,10 +140,24 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
               if (!p || !p.active) return null
               return {swarmOverlay: p.swarmOverlay, pssPublicKey: p.pssPublicKey}
             },
-            onDelivered: async ({jobIdRouting, responseHash, completionTokens}) => {
-              const onChainJobId = await waitForOnChainJobId(jobIndex, jobIdRouting)
+            onDelivered: async ({jobIdRouting: routing, responseHash, completionTokens}) => {
+              const onChainJobId = await waitForOnChainJobId(jobIndex, routing)
               if (!onChainJobId) {
-                log.warn({jobIdRouting}, 'no on-chain jobId after wait; skipping claim')
+                log.warn({jobIdRouting: routing}, 'no on-chain jobId after wait; skipping claim')
+                db.recordProviderJob({
+                  jobId: jobIdRouting,
+                  client: env.from,
+                  modelId: env.body.modelId,
+                  status: 'failed',
+                  receivedAt: 0,
+                  ackedAt: null,
+                  completedAt: null,
+                  claimedAt: null,
+                  promptTokens: null,
+                  completionTokens: null,
+                  earnedXBZZ: null,
+                  errorMessage: 'no on-chain jobId observed before timeout',
+                })
                 return
               }
               const price = cfg.T4T_PRICE_PER_KTOKEN_DEFAULT
@@ -117,17 +168,57 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
                 actualPayment: actual,
               })
               log.info({onChainJobId, actual: actual.toString()}, 'claim submitted')
+              db.recordProviderJob({
+                jobId: jobIdRouting,
+                client: env.from,
+                modelId: env.body.modelId,
+                status: 'claimed',
+                receivedAt: 0,
+                ackedAt: null,
+                completedAt: null,
+                claimedAt: Math.floor(Date.now() / 1000),
+                promptTokens: null,
+                completionTokens: null,
+                earnedXBZZ: actual.toString(),
+                errorMessage: null,
+              })
             },
+            onProgress: persistProgress,
             logger: log,
           },
           env,
         )
       } catch (err) {
         log.error({err}, 'job failed')
+        db.recordProviderJob({
+          jobId: jobIdRouting,
+          client: env.from,
+          modelId: env.body.modelId,
+          status: 'failed',
+          receivedAt: 0,
+          ackedAt: null,
+          completedAt: null,
+          claimedAt: null,
+          promptTokens: null,
+          completionTokens: null,
+          earnedXBZZ: null,
+          errorMessage: String((err as Error)?.message ?? err),
+        })
       } finally {
         queue.release()
       }
     },
+  })
+
+  startAdminServer({
+    host: cfg.T4T_ADMIN_HOST,
+    port: cfg.T4T_ADMIN_PORT,
+    statusRefreshSeconds: cfg.T4T_STATUS_REFRESH_SECONDS,
+    db,
+    chain,
+    bee,
+    queue,
+    logger: log,
   })
 
   if (cfg.T4T_DEACTIVATE_ON_SHUTDOWN) {
