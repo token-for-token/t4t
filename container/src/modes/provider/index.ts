@@ -2,6 +2,7 @@ import {Bee} from '@ethersphere/bee-js'
 import type {ProviderConfig} from '../../lib/config'
 import {
   claimJob,
+  deactivateProvider,
   getProvider,
   makeChain,
   registerProvider,
@@ -124,6 +125,21 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
       }
     },
   })
+
+  if (cfg.T4T_DEACTIVATE_ON_SHUTDOWN) {
+    let shuttingDown = false
+    const onSignal = (sig: NodeJS.Signals) => {
+      if (shuttingDown) return
+      shuttingDown = true
+      log.info({sig}, 'signal received — deactivating before exit')
+      deactivateProvider(chain)
+        .then(tx => log.info({tx}, 'deactivate tx sent'))
+        .catch(err => log.error({err}, 'deactivate on shutdown failed'))
+        .finally(() => process.exit(0))
+    }
+    process.on('SIGTERM', onSignal)
+    process.on('SIGINT', onSignal)
+  }
 
   log.info({offerings: offerings.length, concurrency: cfg.T4T_MAX_CONCURRENT_JOBS}, 'provider ready')
 }

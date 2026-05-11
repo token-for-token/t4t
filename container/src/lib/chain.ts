@@ -87,6 +87,28 @@ export async function sendHeartbeat(c: ChainClient): Promise<Hex> {
   })
 }
 
+export async function deactivateProvider(c: ChainClient): Promise<Hex> {
+  return c.wallet.writeContract({
+    chain: c.wallet.chain!,
+    account: c.wallet.account!,
+    address: c.registry,
+    abi: providerRegistryAbi,
+    functionName: 'deactivate',
+    args: [],
+  })
+}
+
+export async function withdrawStake(c: ChainClient): Promise<Hex> {
+  return c.wallet.writeContract({
+    chain: c.wallet.chain!,
+    account: c.wallet.account!,
+    address: c.registry,
+    abi: providerRegistryAbi,
+    functionName: 'withdrawStake',
+    args: [],
+  })
+}
+
 export async function getProvider(c: ChainClient, owner: Address): Promise<ProviderRow> {
   const raw = await c.pub.readContract({
     address: c.registry,

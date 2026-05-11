@@ -46,10 +46,22 @@ const Provider = Common.extend({
   T4T_PRICE_PER_KTOKEN_DEFAULT: z.coerce.bigint(),
   T4T_HEARTBEAT_INTERVAL_SECONDS: z.coerce.number().int().positive().default(300),
   T4T_MAX_CONCURRENT_JOBS: z.coerce.number().int().positive().default(2),
+  T4T_DEACTIVATE_ON_SHUTDOWN: z
+    .union([z.literal('true'), z.literal('false')])
+    .transform(s => s === 'true')
+    .default('false'),
+})
+
+// Admin subcommands (deactivate, withdraw-stake) only need chain credentials
+// — not OLLAMA_URL, offered models, or any client-only knobs. T4T_MODE is also
+// dropped so operators can run `t4t deactivate` without their compose env loaded.
+const Admin = Common.omit({T4T_MODE: true, POSTAGE_BATCH_ID: true}).extend({
+  POSTAGE_BATCH_ID: Common.shape.POSTAGE_BATCH_ID.optional(),
 })
 
 export type ClientConfig = z.infer<typeof Client> & {walletKey: `0x${string}`}
 export type ProviderConfig = z.infer<typeof Provider> & {walletKey: `0x${string}`}
+export type AdminConfig = z.infer<typeof Admin> & {walletKey: `0x${string}`}
 export type Config = ClientConfig | ProviderConfig
 
 export function loadConfig(): Config {
@@ -58,4 +70,8 @@ export function loadConfig(): Config {
   if (mode === 'client') return {...Client.parse(process.env), walletKey}
   if (mode === 'provider') return {...Provider.parse(process.env), walletKey}
   throw new Error(`T4T_MODE must be "client" or "provider" (got ${mode ?? 'unset'})`)
+}
+
+export function loadAdminConfig(): AdminConfig {
+  return {...Admin.parse(process.env), walletKey: readKey()}
 }
