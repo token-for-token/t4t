@@ -87,6 +87,28 @@ export async function sendHeartbeat(c: ChainClient): Promise<Hex> {
   })
 }
 
+export async function deactivateProvider(c: ChainClient): Promise<Hex> {
+  return c.wallet.writeContract({
+    chain: c.wallet.chain!,
+    account: c.wallet.account!,
+    address: c.registry,
+    abi: providerRegistryAbi,
+    functionName: 'deactivate',
+    args: [],
+  })
+}
+
+export async function withdrawStake(c: ChainClient): Promise<Hex> {
+  return c.wallet.writeContract({
+    chain: c.wallet.chain!,
+    account: c.wallet.account!,
+    address: c.registry,
+    abi: providerRegistryAbi,
+    functionName: 'withdrawStake',
+    args: [],
+  })
+}
+
 export async function getProvider(c: ChainClient, owner: Address): Promise<ProviderRow> {
   const raw = await c.pub.readContract({
     address: c.registry,
@@ -152,6 +174,43 @@ export async function ackJob(c: ChainClient, jobId: Hex): Promise<Hex> {
     functionName: 'ackJob',
     args: [jobId],
   })
+}
+
+export async function readJob(
+  c: ChainClient,
+  jobId: Hex,
+): Promise<{
+  client: Address
+  provider: Address
+  requestHash: Hex
+  responseHash: Hex
+  modelId: string
+  maxPayment: bigint
+  postedAt: bigint
+  ackedAt: bigint
+  ackDeadline: bigint
+  deliveryDeadline: bigint
+  status: number
+}> {
+  const raw = (await c.pub.readContract({
+    address: c.escrow,
+    abi: jobEscrowAbi,
+    functionName: 'jobs',
+    args: [jobId],
+  })) as readonly [Address, Address, Hex, Hex, string, bigint, bigint, bigint, bigint, bigint, number]
+  return {
+    client: raw[0],
+    provider: raw[1],
+    requestHash: raw[2],
+    responseHash: raw[3],
+    modelId: raw[4],
+    maxPayment: raw[5],
+    postedAt: raw[6],
+    ackedAt: raw[7],
+    ackDeadline: raw[8],
+    deliveryDeadline: raw[9],
+    status: raw[10],
+  }
 }
 
 export async function claimJob(

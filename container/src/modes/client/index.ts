@@ -1,12 +1,17 @@
 import {Bee} from '@ethersphere/bee-js'
 import {keccak256, toBytes, toHex} from 'viem'
+import {join} from 'node:path'
 import type {ClientConfig} from '../../lib/config'
-import {ensureAllowance, makeChain, postJob, listProviders, getOfferings} from '../../lib/chain'
+import {ensureAllowance, makeChain, postJob} from '../../lib/chain'
+import {ModelDiscovery} from './models'
 import {logger} from '../../lib/logger'
 import {PssTransport, uploadChunk, downloadChunk} from '../../lib/swarm'
 import {signEnvelope, clientTopic, providerTopic} from '../../lib/envelope'
 import {jsonDecrypt, jsonEncrypt, PassthroughCipher} from '../../lib/crypto'
+import {JobsDb} from '../../lib/jobs-db'
+import {pssPubKeyFromWallet} from '../../lib/keys'
 import {selectProvider} from './selector'
+import {startAdminServer} from './admin'
 import {startClientServer} from './server'
 import type {
   Hex,
@@ -39,6 +44,16 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
     logger: log,
     selfAddress: chain.address,
   })
+  const db = new JobsDb({path: join(cfg.T4T_DATA_DIR, 'jobs.db')})
+  const jobMeta = new Map<string, {provider: string; modelId: string}>()
+
+  if (cfg.T4T_PERSIST_PAYLOADS) {
+    setInterval(() => {
+      const cutoff = Math.floor(Date.now() / 1000) - cfg.T4T_PAYLOAD_RETENTION_HOURS * 3600
+      const redacted = db.redactClientPayloadsBefore(cutoff)
+      if (redacted > 0) log.info({redacted}, 'expired payloads redacted')
+    }, 3600_000)
+  }
 
   // Pending jobs awaiting delivery; resolved on `job_deliver`.
   const pending = new Map<Hex, {resolve: (r: OpenAIChatResponse) => void; reject: (e: unknown) => void}>()
@@ -49,6 +64,26 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
       if (env.type === 'job_ack') {
         const body = env.body as JobAckBody
         log.info({jobId: body.jobId, eta: body.estimatedCompletion}, 'ack received')
+        const meta = jobMeta.get(body.jobId)
+        if (meta) {
+          db.recordClientJob({
+            jobId: body.jobId,
+            provider: meta.provider,
+            modelId: meta.modelId,
+            status: 'acked',
+            maxPayment: '0', // overridden by COALESCE
+            actualPayment: null,
+            postedAt: 0,
+            ackedAt: Math.floor(Date.now() / 1000),
+            deliveredAt: null,
+            claimedAt: null,
+            prompt: null,
+            response: null,
+            promptTokens: null,
+            completionTokens: null,
+            errorMessage: null,
+          })
+        }
       } else if (env.type === 'job_deliver') {
         const body = env.body as JobDeliverBody
         const slot = pending.get(body.jobId)
@@ -56,11 +91,33 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
         try {
           const bytes = await downloadChunk({bee, postageBatchId: cfg.POSTAGE_BATCH_ID, logger: log}, body.responseHash)
           const payload = await jsonDecrypt<ResponsePayload>(cipher, chain.address, bytes)
+          const meta = jobMeta.get(body.jobId)
+          if (meta) {
+            const content = payload.openaiResponse.choices[0]?.message.content ?? ''
+            db.recordClientJob({
+              jobId: body.jobId,
+              provider: meta.provider,
+              modelId: meta.modelId,
+              status: 'delivered',
+              maxPayment: '0',
+              actualPayment: null,
+              postedAt: 0,
+              ackedAt: null,
+              deliveredAt: Math.floor(Date.now() / 1000),
+              claimedAt: null,
+              prompt: null,
+              response: cfg.T4T_PERSIST_PAYLOADS ? content : '[redacted]',
+              promptTokens: payload.openaiResponse.usage?.prompt_tokens ?? null,
+              completionTokens: payload.openaiResponse.usage?.completion_tokens ?? null,
+              errorMessage: null,
+            })
+          }
           slot.resolve(payload.openaiResponse)
         } catch (err) {
           slot.reject(err)
         } finally {
           pending.delete(body.jobId)
+          jobMeta.delete(body.jobId)
         }
       }
     },
@@ -88,7 +145,7 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
       client: chain.address,
       modelId: req.model,
       openaiRequest: req,
-      clientPssPubKey: chain.address, // TODO: separate PSS pub key once ECIES wired
+      clientPssPubKey: pssPubKeyFromWallet(chain.address),
       ts: Math.floor(Date.now() / 1000),
     }
     const encrypted = await jsonEncrypt(cipher, target.provider.pssPublicKey, reqPayload)
@@ -110,6 +167,26 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
     // Use the request-hash-derived ID for in-memory routing while we wait
     // for the on-chain jobId via event indexing in a future iteration.
     const jobIdRouting = keccak256(toBytes('0x' + requestHash))
+
+    const promptText = req.messages.map(m => `${m.role}: ${m.content}`).join('\n')
+    db.recordClientJob({
+      jobId: jobIdRouting,
+      provider: target.provider.owner,
+      modelId: req.model,
+      status: 'posted',
+      maxPayment: maxPayment.toString(),
+      actualPayment: null,
+      postedAt: Math.floor(Date.now() / 1000),
+      ackedAt: null,
+      deliveredAt: null,
+      claimedAt: null,
+      prompt: cfg.T4T_PERSIST_PAYLOADS ? promptText : '[redacted]',
+      response: null,
+      promptTokens: null,
+      completionTokens: null,
+      errorMessage: null,
+    })
+    jobMeta.set(jobIdRouting, {provider: target.provider.owner, modelId: req.model})
 
     const settled = new Promise<OpenAIChatResponse>((resolve, reject) => {
       pending.set(jobIdRouting, {resolve, reject})
@@ -142,21 +219,17 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
     return settled
   }
 
+  const discovery = new ModelDiscovery({
+    chain,
+    allowedModels: cfg.T4T_ALLOWED_MODELS,
+    minProvidersPerModel: cfg.T4T_MIN_PROVIDERS_PER_MODEL,
+    cacheTtlSeconds: cfg.T4T_MODELS_CACHE_TTL_SECONDS,
+  })
+
   async function listModels() {
-    const seen = new Set<string>()
-    let cursor = 0n
-    while (true) {
-      const {page, nextCursor} = await listProviders(chain, cursor, 50n)
-      for (const p of page) {
-        if (!p.active) continue
-        const offerings = await getOfferings(chain, p.owner)
-        for (const o of offerings) seen.add(o.modelId)
-      }
-      if (nextCursor === cursor || page.length === 0) break
-      cursor = nextCursor
-    }
+    const summaries = await discovery.list()
     const created = Math.floor(Date.now() / 1000)
-    return [...seen].map(id => ({id, object: 'model' as const, created, owned_by: 't4t'}))
+    return summaries.map(m => ({id: m.id, object: 'model' as const, created, owned_by: 't4t'}))
   }
 
   startClientServer({
@@ -165,5 +238,18 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
     fakeStreaming: cfg.T4T_FAKE_STREAMING,
     handleChat,
     listModels,
+  })
+
+  startAdminServer({
+    host: cfg.T4T_ADMIN_HOST,
+    port: cfg.T4T_ADMIN_PORT,
+    statusRefreshSeconds: cfg.T4T_STATUS_REFRESH_SECONDS,
+    payloadsPersisted: cfg.T4T_PERSIST_PAYLOADS,
+    db,
+    chain,
+    bee,
+    discovery,
+    pendingCount: () => pending.size,
+    logger: log,
   })
 }

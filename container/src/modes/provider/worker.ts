@@ -16,6 +16,19 @@ import type {
 import {clientTopic, signEnvelope} from '../../lib/envelope'
 import type {Envelope} from '../../lib/types'
 
+export type WorkerStage = 'acked' | 'inferred' | 'delivered'
+
+export interface WorkerProgress {
+  stage: WorkerStage
+  jobIdRouting: Hex
+  client: Hex
+  modelId: string
+  promptTokens?: number
+  completionTokens?: number
+  responseHash?: string
+  timestamp: number
+}
+
 export interface WorkerDeps {
   bee: Bee
   postageBatchId: string
@@ -30,6 +43,8 @@ export interface WorkerDeps {
   ) => Promise<{swarmOverlay: Hex; pssPublicKey: Hex} | null>
   /** Called once the response is uploaded so the listener can submit claimJob. */
   onDelivered: (args: {jobIdRouting: Hex; responseHash: string; completionTokens: number}) => Promise<void>
+  /** Optional persistence hook called at each lifecycle stage. */
+  onProgress?: (p: WorkerProgress) => void
   logger: Logger
 }
 
@@ -39,6 +54,7 @@ const PROTOCOL_VERSION = 1 as const
 export async function processJob(deps: WorkerDeps, notify: Envelope<JobNotifyBody>): Promise<void> {
   const {body} = notify
   const log = deps.logger.child({jobId: body.jobId, model: body.modelId})
+  const jobIdRouting = body.jobId as Hex
 
   // 1. ACK fast so the client doesn't tip into the no-ack slash path.
   const ackEnv = await signEnvelope<JobAckBody>(
@@ -59,6 +75,13 @@ export async function processJob(deps: WorkerDeps, notify: Envelope<JobNotifyBod
     envelope: ackEnv,
   })
   log.info('acked')
+  deps.onProgress?.({
+    stage: 'acked',
+    jobIdRouting,
+    client: notify.from,
+    modelId: body.modelId,
+    timestamp: Math.floor(Date.now() / 1000),
+  })
 
   // 2. Fetch + decrypt request.
   const ct = await downloadChunk({bee: deps.bee, postageBatchId: deps.postageBatchId, logger: log}, body.requestHash)
@@ -70,6 +93,15 @@ export async function processJob(deps: WorkerDeps, notify: Envelope<JobNotifyBod
   // 3. Run inference.
   const openaiResponse = await deps.ollama.chatCompletion(reqPayload.openaiRequest)
   log.info({completionTokens: openaiResponse.usage?.completion_tokens}, 'inference complete')
+  deps.onProgress?.({
+    stage: 'inferred',
+    jobIdRouting,
+    client: notify.from,
+    modelId: body.modelId,
+    promptTokens: openaiResponse.usage?.prompt_tokens,
+    completionTokens: openaiResponse.usage?.completion_tokens,
+    timestamp: Math.floor(Date.now() / 1000),
+  })
 
   // 4. Upload encrypted response.
   const respPayload: ResponsePayload = {
@@ -99,11 +131,21 @@ export async function processJob(deps: WorkerDeps, notify: Envelope<JobNotifyBod
     envelope: deliverEnv,
   })
   log.info({responseHash}, 'delivered')
+  deps.onProgress?.({
+    stage: 'delivered',
+    jobIdRouting,
+    client: notify.from,
+    modelId: body.modelId,
+    promptTokens: openaiResponse.usage?.prompt_tokens,
+    completionTokens: openaiResponse.usage?.completion_tokens,
+    responseHash,
+    timestamp: Math.floor(Date.now() / 1000),
+  })
 
   // 6. Hand back to the listener for on-chain claim.
-  const jobIdRouting = keccak256(toBytes('0x' + body.requestHash))
+  const routingFromHash = keccak256(toBytes('0x' + body.requestHash))
   await deps.onDelivered({
-    jobIdRouting,
+    jobIdRouting: routingFromHash,
     responseHash,
     completionTokens: openaiResponse.usage?.completion_tokens ?? 0,
   })

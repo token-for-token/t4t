@@ -160,6 +160,25 @@ export const jobEscrowAbi = [
     outputs: [],
   },
   {
+    type: 'function',
+    name: 'jobs',
+    stateMutability: 'view',
+    inputs: [{name: 'jobId', type: 'bytes32'}],
+    outputs: [
+      {name: 'client', type: 'address'},
+      {name: 'provider', type: 'address'},
+      {name: 'requestHash', type: 'bytes32'},
+      {name: 'responseHash', type: 'bytes32'},
+      {name: 'modelId', type: 'string'},
+      {name: 'maxPayment', type: 'uint128'},
+      {name: 'postedAt', type: 'uint64'},
+      {name: 'ackedAt', type: 'uint64'},
+      {name: 'ackDeadline', type: 'uint64'},
+      {name: 'deliveryDeadline', type: 'uint64'},
+      {name: 'status', type: 'uint8'},
+    ],
+  },
+  {
     type: 'event',
     name: 'JobPosted',
     inputs: [

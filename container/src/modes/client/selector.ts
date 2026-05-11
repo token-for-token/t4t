@@ -22,6 +22,9 @@ const MIN_TOTAL_JOBS = 20
 const MIN_SUCCESS_RATE = 0.95
 /** Share of routes given to new providers so they can build reputation. */
 const EXPLORATION_SHARE = 0.05
+/** Matches `ProviderRegistry.HEARTBEAT_TTL`. Providers stale past this drop
+ *  from the selectable set, even if `active` is still true on-chain. */
+const HEARTBEAT_TTL_SECONDS = 600
 
 /**
  * Pull the active provider set, filter to those that offer the requested model
@@ -38,11 +41,13 @@ export async function selectProvider(
   }
 
   const candidates: CandidateProvider[] = []
+  const now = Math.floor(Date.now() / 1000)
   let cursor = 0n
   for (let i = 0; i < 20; i++) {
     const {page, nextCursor} = await listProviders(chain, cursor, 50n)
     for (const provider of page) {
       if (!provider.active) continue
+      if (!isHeartbeatFresh(provider.lastHeartbeat, now)) continue
       const offerings = await getOfferings(chain, provider.owner)
       const offering = offerings.find(
         o =>
@@ -55,6 +60,12 @@ export async function selectProvider(
     cursor = nextCursor
   }
   return rank(candidates, strategy)
+}
+
+export function isHeartbeatFresh(lastHeartbeat: number | bigint, nowSeconds: number): boolean {
+  const last = typeof lastHeartbeat === 'bigint' ? Number(lastHeartbeat) : lastHeartbeat
+  if (last === 0) return false
+  return last + HEARTBEAT_TTL_SECONDS >= nowSeconds
 }
 
 async function matchOffering(
