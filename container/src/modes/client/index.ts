@@ -1,7 +1,8 @@
 import {Bee} from '@ethersphere/bee-js'
 import {keccak256, toBytes, toHex} from 'viem'
 import type {ClientConfig} from '../../lib/config'
-import {ensureAllowance, makeChain, postJob, listProviders, getOfferings} from '../../lib/chain'
+import {ensureAllowance, makeChain, postJob} from '../../lib/chain'
+import {ModelDiscovery} from './models'
 import {logger} from '../../lib/logger'
 import {PssTransport, uploadChunk, downloadChunk} from '../../lib/swarm'
 import {signEnvelope, clientTopic, providerTopic} from '../../lib/envelope'
@@ -143,21 +144,17 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
     return settled
   }
 
+  const discovery = new ModelDiscovery({
+    chain,
+    allowedModels: cfg.T4T_ALLOWED_MODELS,
+    minProvidersPerModel: cfg.T4T_MIN_PROVIDERS_PER_MODEL,
+    cacheTtlSeconds: cfg.T4T_MODELS_CACHE_TTL_SECONDS,
+  })
+
   async function listModels() {
-    const seen = new Set<string>()
-    let cursor = 0n
-    while (true) {
-      const {page, nextCursor} = await listProviders(chain, cursor, 50n)
-      for (const p of page) {
-        if (!p.active) continue
-        const offerings = await getOfferings(chain, p.owner)
-        for (const o of offerings) seen.add(o.modelId)
-      }
-      if (nextCursor === cursor || page.length === 0) break
-      cursor = nextCursor
-    }
+    const summaries = await discovery.list()
     const created = Math.floor(Date.now() / 1000)
-    return [...seen].map(id => ({id, object: 'model' as const, created, owned_by: 't4t'}))
+    return summaries.map(m => ({id: m.id, object: 'model' as const, created, owned_by: 't4t'}))
   }
 
   startClientServer({

@@ -28,6 +28,13 @@ const Common = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
 })
 
+const CsvList = z.string().transform(s =>
+  s
+    .split(',')
+    .map(t => t.trim())
+    .filter(Boolean),
+)
+
 const Client = Common.extend({
   T4T_HTTP_PORT: z.coerce.number().int().positive().default(8080),
   T4T_SELECTION_STRATEGY: z.enum(['cheapest', 'top_rep_cheapest', 'manual']).default('top_rep_cheapest'),
@@ -38,6 +45,9 @@ const Client = Common.extend({
     .transform(s => s === 'true')
     .default('true'),
   T4T_MANUAL_PROVIDER: Address.optional(),
+  T4T_MODELS_CACHE_TTL_SECONDS: z.coerce.number().int().nonnegative().default(60),
+  T4T_ALLOWED_MODELS: CsvList.optional(),
+  T4T_MIN_PROVIDERS_PER_MODEL: z.coerce.number().int().positive().default(1),
 })
 
 const Provider = Common.extend({
