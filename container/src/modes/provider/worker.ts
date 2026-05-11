@@ -85,7 +85,7 @@ export async function processJob(deps: WorkerDeps, notify: Envelope<JobNotifyBod
 
   // 2. Fetch + decrypt request.
   const ct = await downloadChunk({bee: deps.bee, postageBatchId: deps.postageBatchId, logger: log}, body.requestHash)
-  const reqPayload = await jsonDecrypt<RequestPayload>(deps.cipher, deps.selfAddress, ct)
+  const reqPayload = await jsonDecrypt<RequestPayload>(deps.cipher, ct)
   if (reqPayload.openaiRequest.model !== body.modelId) {
     throw new Error(`model mismatch: envelope=${body.modelId} payload=${reqPayload.openaiRequest.model}`)
   }

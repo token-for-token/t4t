@@ -14,11 +14,11 @@ import {
 import {logger} from '../../lib/logger'
 import {PssTransport} from '../../lib/swarm'
 import {providerTopic} from '../../lib/envelope'
-import {PassthroughCipher} from '../../lib/crypto'
+import {EciesCipher} from '../../lib/crypto'
 import {JobPostedIndex} from '../../lib/job-index'
 import {JobsDb} from '../../lib/jobs-db'
 import {OllamaClient} from '../../lib/ollama'
-import {pssPubKeyFromWallet} from '../../lib/keys'
+import {loadOrCreatePssKey} from '../../lib/keys'
 import type {Hex, ModelOffering} from '../../lib/types'
 import {startAdminServer} from './admin'
 import {processJob, type WorkerProgress} from './worker'
@@ -37,18 +37,32 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
     xbzz: cfg.XBZZ_ADDRESS,
   })
 
+  const pssKeyPath = cfg.T4T_PSS_KEY_PATH ?? join(cfg.T4T_DATA_DIR, 'pss.key')
+  const pssKeys = loadOrCreatePssKey(pssKeyPath)
+  log.info({pssKeyPath, pssPubKeyX: pssKeys.publicKeyX}, 'PSS keypair loaded')
+
   // First-run register. Idempotent: we read state, then write if missing.
   const existing = await getProvider(chain, chain.address)
   if (!existing.owner || existing.owner === '0x0000000000000000000000000000000000000000') {
     await ensureAllowance(chain, cfg.REGISTRY_ADDRESS, PROVIDER_INITIAL_STAKE)
     const overlay = (await bee.getNodeAddresses().catch(() => null))?.overlay ?? '0x' + '00'.repeat(32)
     await registerProvider(chain, {
-      pssPublicKey: pssPubKeyFromWallet(chain.address),
+      pssPublicKey: pssKeys.publicKeyX,
       swarmOverlay: ('0x' + overlay.toString().replace(/^0x/, '')) as Hex,
       metadataURI: '',
       initialStake: PROVIDER_INITIAL_STAKE,
     })
     log.info('registered on-chain')
+  } else if (existing.pssPublicKey.toLowerCase() !== pssKeys.publicKeyX.toLowerCase()) {
+    // The registry has a different PSS pubkey than what we just loaded from
+    // disk. Clients fetch the on-chain key to encrypt requests, so they will
+    // encrypt to a key we cannot decrypt — every incoming job will fail until
+    // this is fixed (either deactivate + re-register, or restore the original
+    // key file from backup). Log loudly and continue so the operator can act.
+    log.error(
+      {onChain: existing.pssPublicKey, local: pssKeys.publicKeyX},
+      'on-chain PSS pubkey differs from local key file — incoming jobs will be undecryptable',
+    )
   }
 
   const offerings: ModelOffering[] = cfg.T4T_OFFERED_MODELS.split(',')
@@ -69,7 +83,7 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
     sendHeartbeat(chain).catch(err => log.warn({err}, 'heartbeat failed'))
   }, cfg.T4T_HEARTBEAT_INTERVAL_SECONDS * 1000)
 
-  const cipher = new PassthroughCipher()
+  const cipher = new EciesCipher(pssKeys.privateKey)
   const pss = new PssTransport({
     bee,
     postageBatchId: cfg.POSTAGE_BATCH_ID,

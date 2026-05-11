@@ -31,6 +31,7 @@ const Common = z.object({
   POSTAGE_BATCH_ID: z.string().regex(/^[0-9a-fA-F]{64}$/),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   T4T_DATA_DIR: z.string().default('/data'),
+  T4T_PSS_KEY_PATH: z.string().optional(),
   T4T_ADMIN_HOST: z.string().default('127.0.0.1'),
   T4T_ADMIN_PORT: z.coerce.number().int().positive().default(8090),
   T4T_STATUS_REFRESH_SECONDS: z.coerce.number().int().positive().default(10),

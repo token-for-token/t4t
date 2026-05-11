@@ -52,7 +52,5 @@ A two-page tour. The protocol spec lives in [`spec.md`](spec.md); this doc orien
 
 ## Open work (M1 → M2)
 
-- ECIES payload encryption in `lib/crypto.ts`.
 - Event-indexed `JobPosted` → routing-id map in `modes/provider/index.ts` (the `resolveOnChainJobId` stub).
-- Separate PSS keypair from wallet (currently the wallet address is the placeholder PSS pub key).
 - Heartbeat-failure detection in client selector (`isLive` is checked on-chain, but stale rows still surface in `listProviders`).
