@@ -49,6 +49,8 @@ export function layout(opts: LayoutOpts): string {
     .pill-failed{background:#fde8e8;color:#a22}
     .pill-posted{background:#eef;color:#447}
     .pill-acked{background:#fef6e0;color:#7a5}
+    .pill-cancelled{background:#fde8e8;color:#a22}
+    .pill-timed_out{background:#fde8e8;color:#a22}
     .kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;font-size:13px}
     .kv dt{color:#666}
     .kv dd{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
