@@ -36,10 +36,22 @@ Prereqs: Foundry, Node ≥ 20, Docker (optional), a Bee node, an Ollama node, an
 
 ```bash
 make install            # forge install + npm install
-make test               # forge test + vitest
+make test               # forge test + vitest (hermetic)
 make build              # forge build + tsc
 make docker             # build container image
 ```
+
+### Fork tests
+
+Run the contract suite end-to-end against a Gnosis Chain fork and the real
+xBZZ ERC-20 — mirrors SwarmChat's fork-test pattern:
+
+```bash
+FORK_GNOSIS_RPC_URL=https://rpc.gnosischain.com make test-contracts-fork
+```
+
+Wallets are seeded via `vm.deal`; no whale impersonation needed. Excluded
+from `make test` so the default loop stays hermetic.
 
 ### Local end-to-end (M1)
 
