@@ -52,12 +52,17 @@ dev-provider: ## Run provider mode with tsx watch
 test: test-contracts test-container ## Run all tests
 
 .PHONY: test-contracts
-test-contracts: ## Forge unit + fuzz + invariant tests
-	cd contracts && forge test -vvv
+test-contracts: ## Forge unit + fuzz + invariant tests (hermetic, no fork)
+	cd contracts && forge test -vvv --no-match-contract ForkTest
 
 .PHONY: test-contracts-gas
 test-contracts-gas: ## Forge with gas report
-	cd contracts && forge test --gas-report
+	cd contracts && forge test --gas-report --no-match-contract ForkTest
+
+.PHONY: test-contracts-fork
+test-contracts-fork: ## Forge end-to-end against a Gnosis Chain fork + real xBZZ
+	cd contracts && FORK_GNOSIS_RPC_URL=$${FORK_GNOSIS_RPC_URL:-$(RPC_URL)} \
+		forge test --match-contract ForkTest -vvv
 
 .PHONY: test-container
 test-container: ## Container vitest suite
