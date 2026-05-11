@@ -1,0 +1,69 @@
+# Example docker-compose for running a T4T client and provider side-by-side
+# against a single local Bee node. Copy to docker-compose.yml and edit env
+# values. See docs/spec.md §7 for the full env reference.
+
+services:
+  bee:
+    image: ethersphere/bee:latest
+    restart: unless-stopped
+    environment:
+      BEE_API_ADDR: ":1633"
+      BEE_BLOCKCHAIN_RPC_ENDPOINT: ${GNOSIS_RPC_URL:-https://rpc.gnosischain.com}
+      BEE_FULL_NODE: "true"
+    ports:
+      - "1633:1633"
+    volumes:
+      - bee_data:/home/bee/.bee
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  t4t-client:
+    image: t4t:dev
+    build: ./container
+    restart: unless-stopped
+    depends_on: [bee]
+    environment:
+      T4T_MODE: client
+      BEE_API_URL: http://bee:1633
+      GNOSIS_RPC_URL: ${GNOSIS_RPC_URL}
+      REGISTRY_ADDRESS: ${REGISTRY_ADDRESS}
+      ESCROW_ADDRESS: ${ESCROW_ADDRESS}
+      XBZZ_ADDRESS: ${XBZZ_ADDRESS}
+      POSTAGE_BATCH_ID: ${POSTAGE_BATCH_ID}
+      WALLET_KEY: ${CLIENT_WALLET_KEY}
+      T4T_HTTP_PORT: "8080"
+      T4T_SELECTION_STRATEGY: top_rep_cheapest
+      T4T_DEFAULT_DEADLINE_SECONDS: "300"
+      T4T_FAKE_STREAMING: "true"
+    ports:
+      - "8080:8080"
+
+  t4t-provider:
+    image: t4t:dev
+    build: ./container
+    restart: unless-stopped
+    depends_on: [bee, ollama]
+    environment:
+      T4T_MODE: provider
+      BEE_API_URL: http://bee:1633
+      OLLAMA_URL: http://ollama:11434
+      GNOSIS_RPC_URL: ${GNOSIS_RPC_URL}
+      REGISTRY_ADDRESS: ${REGISTRY_ADDRESS}
+      ESCROW_ADDRESS: ${ESCROW_ADDRESS}
+      XBZZ_ADDRESS: ${XBZZ_ADDRESS}
+      POSTAGE_BATCH_ID: ${POSTAGE_BATCH_ID}
+      WALLET_KEY: ${PROVIDER_WALLET_KEY}
+      T4T_OFFERED_MODELS: llama3:8b,mistral:7b
+      T4T_PRICE_PER_KTOKEN_DEFAULT: "1000000000000000"  # 0.001 xBZZ / 1k tokens
+      T4T_HEARTBEAT_INTERVAL_SECONDS: "300"
+      T4T_MAX_CONCURRENT_JOBS: "2"
+
+volumes:
+  bee_data:
+  ollama_data:

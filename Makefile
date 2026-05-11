@@ -1,0 +1,113 @@
+SHELL := /bin/bash
+-include .env
+export
+
+# === Config ===
+BEE_API_URL    ?= http://localhost:1633
+RPC_URL        ?= https://rpc.gnosischain.com
+CHIADO_RPC_URL ?= https://rpc.chiadochain.net
+LOCAL_RPC_URL  ?= http://localhost:8545
+ENS_NAME       ?= t4t.eth
+
+.PHONY: help
+help: ## Show this help
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-22s\033[0m %s\n", $$1, $$2}'
+
+# ============================================================
+#  Setup
+# ============================================================
+
+.PHONY: install
+install: install-contracts install-container ## Install all dependencies
+
+.PHONY: install-contracts
+install-contracts: ## Install forge-std into contracts/lib
+	cd contracts && forge install foundry-rs/forge-std --no-git --no-commit
+
+.PHONY: install-container
+install-container: ## Install container npm dependencies
+	cd container && npm install
+
+# ============================================================
+#  Development
+# ============================================================
+
+.PHONY: anvil
+anvil: ## Start local Anvil fork of Gnosis Chain
+	anvil --fork-url $(RPC_URL) --chain-id 100 --port 8545
+
+.PHONY: dev-client
+dev-client: ## Run client mode with tsx watch
+	cd container && T4T_MODE=client npm run dev
+
+.PHONY: dev-provider
+dev-provider: ## Run provider mode with tsx watch
+	cd container && T4T_MODE=provider npm run dev
+
+# ============================================================
+#  Testing
+# ============================================================
+
+.PHONY: test
+test: test-contracts test-container ## Run all tests
+
+.PHONY: test-contracts
+test-contracts: ## Forge unit tests
+	cd contracts && forge test -vvv
+
+.PHONY: test-contracts-gas
+test-contracts-gas: ## Forge with gas report
+	cd contracts && forge test --gas-report
+
+.PHONY: test-container
+test-container: ## Container vitest suite
+	cd container && npm test
+
+# ============================================================
+#  Build
+# ============================================================
+
+.PHONY: build
+build: build-contracts build-container ## Build everything
+
+.PHONY: build-contracts
+build-contracts: ## forge build
+	cd contracts && forge build
+
+.PHONY: build-container
+build-container: ## TypeScript build
+	cd container && npm run build
+
+.PHONY: docker
+docker: ## Build the t4t container image
+	docker build -t t4t:dev container
+
+.PHONY: fmt
+fmt: ## Format Solidity
+	cd contracts && forge fmt
+
+# ============================================================
+#  Deploy
+# ============================================================
+
+.PHONY: deploy-chiado
+deploy-chiado: build-contracts ## Deploy contracts to Chiado testnet
+	@test -n "$$XBZZ_ADDRESS"   || { echo "Set XBZZ_ADDRESS in .env"; exit 1; }
+	@test -n "$$TREASURY_OWNER" || { echo "Set TREASURY_OWNER in .env"; exit 1; }
+	@test -n "$$PRIVATE_KEY"    || { echo "Set PRIVATE_KEY in .env"; exit 1; }
+	cd contracts && forge script script/Deploy.s.sol:DeployScript \
+		--rpc-url $(CHIADO_RPC_URL) \
+		--private-key $$PRIVATE_KEY \
+		--broadcast
+
+.PHONY: deploy-local
+deploy-local: build-contracts ## Deploy contracts to local Anvil
+	cd contracts && forge script script/Deploy.s.sol:DeployScript \
+		--rpc-url $(LOCAL_RPC_URL) \
+		--private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+		--broadcast
+
+.PHONY: clean
+clean: ## Remove build artifacts
+	cd contracts && forge clean
+	rm -rf container/dist container/node_modules
