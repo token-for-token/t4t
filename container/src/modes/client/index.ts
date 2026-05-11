@@ -7,9 +7,9 @@ import {ModelDiscovery} from './models'
 import {logger} from '../../lib/logger'
 import {PssTransport, uploadChunk, downloadChunk} from '../../lib/swarm'
 import {signEnvelope, clientTopic, providerTopic} from '../../lib/envelope'
-import {jsonDecrypt, jsonEncrypt, PassthroughCipher} from '../../lib/crypto'
+import {EciesCipher, jsonDecrypt, jsonEncrypt} from '../../lib/crypto'
 import {JobsDb} from '../../lib/jobs-db'
-import {pssPubKeyFromWallet} from '../../lib/keys'
+import {derivePssKeypair} from '../../lib/keys'
 import {selectProvider} from './selector'
 import {startAdminServer} from './admin'
 import {startClientServer} from './server'
@@ -37,7 +37,8 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
     xbzz: cfg.XBZZ_ADDRESS,
   })
 
-  const cipher = new PassthroughCipher()
+  const pssKeys = derivePssKeypair(cfg.walletKey)
+  const cipher = new EciesCipher(pssKeys.privateKey)
   const pss = new PssTransport({
     bee,
     postageBatchId: cfg.POSTAGE_BATCH_ID,
@@ -90,7 +91,7 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
         if (!slot) return
         try {
           const bytes = await downloadChunk({bee, postageBatchId: cfg.POSTAGE_BATCH_ID, logger: log}, body.responseHash)
-          const payload = await jsonDecrypt<ResponsePayload>(cipher, chain.address, bytes)
+          const payload = await jsonDecrypt<ResponsePayload>(cipher, bytes)
           const meta = jobMeta.get(body.jobId)
           if (meta) {
             const content = payload.openaiResponse.choices[0]?.message.content ?? ''
@@ -145,7 +146,7 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
       client: chain.address,
       modelId: req.model,
       openaiRequest: req,
-      clientPssPubKey: pssPubKeyFromWallet(chain.address),
+      clientPssPubKey: pssKeys.publicKeyX,
       ts: Math.floor(Date.now() / 1000),
     }
     const encrypted = await jsonEncrypt(cipher, target.provider.pssPublicKey, reqPayload)
