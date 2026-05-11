@@ -9,7 +9,7 @@ import {PssTransport, uploadChunk, downloadChunk} from '../../lib/swarm'
 import {signEnvelope, clientTopic, providerTopic} from '../../lib/envelope'
 import {EciesCipher, jsonDecrypt, jsonEncrypt} from '../../lib/crypto'
 import {JobsDb} from '../../lib/jobs-db'
-import {derivePssKeypair} from '../../lib/keys'
+import {loadOrCreatePssKey} from '../../lib/keys'
 import {selectProvider} from './selector'
 import {startAdminServer} from './admin'
 import {startClientServer} from './server'
@@ -37,7 +37,9 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
     xbzz: cfg.XBZZ_ADDRESS,
   })
 
-  const pssKeys = derivePssKeypair(cfg.walletKey)
+  const pssKeyPath = cfg.T4T_PSS_KEY_PATH ?? join(cfg.T4T_DATA_DIR, 'pss.key')
+  const pssKeys = loadOrCreatePssKey(pssKeyPath)
+  log.info({pssKeyPath, pssPubKeyX: pssKeys.publicKeyX}, 'PSS keypair loaded')
   const cipher = new EciesCipher(pssKeys.privateKey)
   const pss = new PssTransport({
     bee,

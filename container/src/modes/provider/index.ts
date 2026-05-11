@@ -18,7 +18,7 @@ import {EciesCipher} from '../../lib/crypto'
 import {JobPostedIndex} from '../../lib/job-index'
 import {JobsDb} from '../../lib/jobs-db'
 import {OllamaClient} from '../../lib/ollama'
-import {derivePssKeypair} from '../../lib/keys'
+import {loadOrCreatePssKey} from '../../lib/keys'
 import type {Hex, ModelOffering} from '../../lib/types'
 import {startAdminServer} from './admin'
 import {processJob, type WorkerProgress} from './worker'
@@ -37,7 +37,9 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
     xbzz: cfg.XBZZ_ADDRESS,
   })
 
-  const pssKeys = derivePssKeypair(cfg.walletKey)
+  const pssKeyPath = cfg.T4T_PSS_KEY_PATH ?? join(cfg.T4T_DATA_DIR, 'pss.key')
+  const pssKeys = loadOrCreatePssKey(pssKeyPath)
+  log.info({pssKeyPath, pssPubKeyX: pssKeys.publicKeyX}, 'PSS keypair loaded')
 
   // First-run register. Idempotent: we read state, then write if missing.
   const existing = await getProvider(chain, chain.address)
@@ -51,6 +53,16 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
       initialStake: PROVIDER_INITIAL_STAKE,
     })
     log.info('registered on-chain')
+  } else if (existing.pssPublicKey.toLowerCase() !== pssKeys.publicKeyX.toLowerCase()) {
+    // The registry has a different PSS pubkey than what we just loaded from
+    // disk. Clients fetch the on-chain key to encrypt requests, so they will
+    // encrypt to a key we cannot decrypt — every incoming job will fail until
+    // this is fixed (either deactivate + re-register, or restore the original
+    // key file from backup). Log loudly and continue so the operator can act.
+    log.error(
+      {onChain: existing.pssPublicKey, local: pssKeys.publicKeyX},
+      'on-chain PSS pubkey differs from local key file — incoming jobs will be undecryptable',
+    )
   }
 
   const offerings: ModelOffering[] = cfg.T4T_OFFERED_MODELS.split(',')

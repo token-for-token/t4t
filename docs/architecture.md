@@ -53,7 +53,4 @@ A two-page tour. The protocol spec lives in [`spec.md`](spec.md); this doc orien
 ## Open work (M1 → M2)
 
 - Event-indexed `JobPosted` → routing-id map in `modes/provider/index.ts` (the `resolveOnChainJobId` stub).
-- Separate PSS keypair from wallet. The PSS key is now derived from the wallet
-  key via HKDF (`lib/keys.ts`), which gives real ECIES but still couples the
-  two secrets — a dedicated key stored outside the wallet is the next step.
 - Heartbeat-failure detection in client selector (`isLive` is checked on-chain, but stale rows still surface in `listProviders`).
