@@ -2,6 +2,7 @@ import {
   createPublicClient,
   createWalletClient,
   http,
+  parseEventLogs,
   type Address,
   type Hex,
   type PublicClient,
@@ -11,6 +12,10 @@ import {privateKeyToAccount} from 'viem/accounts'
 import {gnosis, gnosisChiado} from 'viem/chains'
 import {erc20Abi, jobEscrowAbi, providerRegistryAbi} from './abi'
 import type {ModelOffering, ProviderRow} from './types'
+
+/** Mirrors `JobEscrow.ACK_WINDOW` (spec §3). Used by the client to schedule
+ *  the no-ack cancel deadline locally. Keep in sync with the contract. */
+export const ACK_WINDOW_SECONDS = 30
 
 export interface ChainClient {
   pub: PublicClient
@@ -154,8 +159,8 @@ export async function postJob(
     maxPayment: bigint
     deliveryDeadline: number
   },
-): Promise<Hex> {
-  return c.wallet.writeContract({
+): Promise<{txHash: Hex; jobId: Hex}> {
+  const txHash = await c.wallet.writeContract({
     chain: c.wallet.chain!,
     account: c.wallet.account!,
     address: c.escrow,
@@ -163,6 +168,11 @@ export async function postJob(
     functionName: 'postJob',
     args: [args.provider, args.requestHash, args.modelId, args.maxPayment, BigInt(args.deliveryDeadline)],
   })
+  const receipt = await c.pub.waitForTransactionReceipt({hash: txHash})
+  const events = parseEventLogs({abi: jobEscrowAbi, eventName: 'JobPosted', logs: receipt.logs})
+  const ev = events[0]
+  if (!ev) throw new Error('postJob: JobPosted event missing from receipt')
+  return {txHash, jobId: ev.args.jobId as Hex}
 }
 
 export async function ackJob(c: ChainClient, jobId: Hex): Promise<Hex> {
@@ -211,6 +221,28 @@ export async function readJob(
     deliveryDeadline: raw[9],
     status: raw[10],
   }
+}
+
+export async function cancelJob(c: ChainClient, jobId: Hex): Promise<Hex> {
+  return c.wallet.writeContract({
+    chain: c.wallet.chain!,
+    account: c.wallet.account!,
+    address: c.escrow,
+    abi: jobEscrowAbi,
+    functionName: 'cancelJob',
+    args: [jobId],
+  })
+}
+
+export async function timeoutJob(c: ChainClient, jobId: Hex): Promise<Hex> {
+  return c.wallet.writeContract({
+    chain: c.wallet.chain!,
+    account: c.wallet.account!,
+    address: c.escrow,
+    abi: jobEscrowAbi,
+    functionName: 'timeoutJob',
+    args: [jobId],
+  })
 }
 
 export async function claimJob(

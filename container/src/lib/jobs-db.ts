@@ -23,6 +23,8 @@ export type JobStatus =
   | 'failed'
   | 'posted'
   | 'acked'
+  | 'cancelled'
+  | 'timed_out'
 
 export interface ProviderJobRow {
   jobId: string

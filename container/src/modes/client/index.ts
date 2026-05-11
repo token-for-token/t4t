@@ -2,7 +2,7 @@ import {Bee} from '@ethersphere/bee-js'
 import {keccak256, toBytes, toHex} from 'viem'
 import {join} from 'node:path'
 import type {ClientConfig} from '../../lib/config'
-import {ensureAllowance, makeChain, postJob} from '../../lib/chain'
+import {ACK_WINDOW_SECONDS, cancelJob, ensureAllowance, makeChain, postJob, timeoutJob} from '../../lib/chain'
 import {ModelDiscovery} from './models'
 import {logger} from '../../lib/logger'
 import {PssTransport, uploadChunk, downloadChunk} from '../../lib/swarm'
@@ -61,12 +61,120 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
   // Pending jobs awaiting delivery; resolved on `job_deliver`.
   const pending = new Map<Hex, {resolve: (r: OpenAIChatResponse) => void; reject: (e: unknown) => void}>()
 
+  // Per-job failure timers — schedule on-chain cancel/timeout when the provider
+  // fails liveness (spec §3). Both timers use a small grace beyond the on-chain
+  // deadline so `block.timestamp > deadline` holds when the tx mines.
+  const FAILURE_GRACE_SECONDS = 5
+  interface FailureSlot {
+    onChainJobId: Hex
+    deliveryDeadline: number
+    cancelTimer?: NodeJS.Timeout
+    timeoutTimer?: NodeJS.Timeout
+  }
+  const failureTimers = new Map<Hex, FailureSlot>()
+
+  function clearFailureTimers(routing: Hex): void {
+    const slot = failureTimers.get(routing)
+    if (!slot) return
+    if (slot.cancelTimer) clearTimeout(slot.cancelTimer)
+    if (slot.timeoutTimer) clearTimeout(slot.timeoutTimer)
+    failureTimers.delete(routing)
+  }
+
+  function rejectAndCleanup(routing: Hex, err: Error): void {
+    pending.get(routing)?.reject(err)
+    pending.delete(routing)
+    jobMeta.delete(routing)
+    clearFailureTimers(routing)
+  }
+
+  function persistFailureRow(routing: Hex, status: 'cancelled' | 'timed_out', errorMessage: string): void {
+    const meta = jobMeta.get(routing)
+    if (!meta) return
+    db.recordClientJob({
+      jobId: routing,
+      provider: meta.provider,
+      modelId: meta.modelId,
+      status,
+      maxPayment: '0',
+      actualPayment: null,
+      postedAt: 0,
+      ackedAt: null,
+      deliveredAt: null,
+      claimedAt: null,
+      prompt: null,
+      response: null,
+      promptTokens: null,
+      completionTokens: null,
+      errorMessage,
+    })
+  }
+
+  async function onAckTimeout(routing: Hex): Promise<void> {
+    const slot = failureTimers.get(routing)
+    if (!slot) return
+    try {
+      const tx = await cancelJob(chain, slot.onChainJobId)
+      log.warn({tx, routing, onChainJobId: slot.onChainJobId}, 'no ACK within window — cancelled on-chain')
+      persistFailureRow(routing, 'cancelled', 'no PSS ack within ACK_WINDOW; cancelled on-chain')
+      rejectAndCleanup(routing, new Error('provider failed to ACK within window'))
+    } catch (err) {
+      log.warn({err, routing}, 'cancelJob failed — provider likely acked on-chain mid-flight')
+      // Provider may have on-chain-acked between our deadline check and tx — leave the
+      // delivery timer to handle the unhappy path if no PSS deliver arrives.
+    }
+  }
+
+  async function onDeliveryTimeout(routing: Hex): Promise<void> {
+    const slot = failureTimers.get(routing)
+    if (!slot) return
+    // Spec §3: prefer timeoutJob (3× slash). Falls back to cancelJob if the
+    // provider PSS-acked but never on-chain-acked — status stays Pending and
+    // timeoutJob reverts with BadStatus, but cancelJob still applies.
+    try {
+      const tx = await timeoutJob(chain, slot.onChainJobId)
+      log.warn({tx, routing, onChainJobId: slot.onChainJobId}, 'delivery deadline missed — timed out on-chain')
+      persistFailureRow(routing, 'timed_out', 'no PSS delivery before deadline; timeoutJob applied')
+      rejectAndCleanup(routing, new Error('provider failed to deliver before deadline'))
+      return
+    } catch (err) {
+      log.warn({err, routing}, 'timeoutJob reverted — falling back to cancelJob')
+    }
+    try {
+      const tx = await cancelJob(chain, slot.onChainJobId)
+      log.warn({tx, routing, onChainJobId: slot.onChainJobId}, 'cancelJob fallback applied')
+      persistFailureRow(routing, 'cancelled', 'no PSS delivery before deadline; cancelJob fallback applied')
+      rejectAndCleanup(routing, new Error('provider failed to deliver before deadline'))
+    } catch (err) {
+      log.error({err, routing}, 'both timeoutJob and cancelJob failed — job stuck in escrow')
+      rejectAndCleanup(routing, new Error('delivery deadline missed; settlement failed'))
+    }
+  }
+
   pss.subscribe({
     topic: clientTopic(chain.address),
     onEnvelope: async env => {
       if (env.type === 'job_ack') {
         const body = env.body as JobAckBody
         log.info({jobId: body.jobId, eta: body.estimatedCompletion}, 'ack received')
+        const slot = failureTimers.get(body.jobId)
+        if (slot) {
+          if (slot.cancelTimer) {
+            clearTimeout(slot.cancelTimer)
+            slot.cancelTimer = undefined
+          }
+          if (!slot.timeoutTimer) {
+            const msUntilTimeout = Math.max(
+              0,
+              (slot.deliveryDeadline + FAILURE_GRACE_SECONDS) * 1000 - Date.now(),
+            )
+            slot.timeoutTimer = setTimeout(() => {
+              onDeliveryTimeout(body.jobId).catch(err =>
+                log.error({err, routing: body.jobId}, 'onDeliveryTimeout threw'),
+              )
+            }, msUntilTimeout)
+          }
+        }
         const meta = jobMeta.get(body.jobId)
         if (meta) {
           db.recordClientJob({
@@ -121,6 +229,7 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
         } finally {
           pending.delete(body.jobId)
           jobMeta.delete(body.jobId)
+          clearFailureTimers(body.jobId)
         }
       }
     },
@@ -158,17 +267,18 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
     )
 
     const deliveryDeadline = Math.floor(Date.now() / 1000) + cfg.T4T_DEFAULT_DEADLINE_SECONDS
-    const txHash = await postJob(chain, {
+    const {txHash, jobId: onChainJobId} = await postJob(chain, {
       provider: target.provider.owner,
       requestHash: ('0x' + requestHash) as Hex,
       modelId: req.model,
       maxPayment,
       deliveryDeadline,
     })
-    log.info({txHash, provider: target.provider.owner}, 'job posted on-chain')
+    log.info({txHash, onChainJobId, provider: target.provider.owner}, 'job posted on-chain')
 
-    // Use the request-hash-derived ID for in-memory routing while we wait
-    // for the on-chain jobId via event indexing in a future iteration.
+    // The PSS notify carries `requestHash`-derived id; the provider matches
+    // it to the chain via its JobPostedIndex. We keep the on-chain id alongside
+    // so we can call cancelJob/timeoutJob on liveness failure.
     const jobIdRouting = keccak256(toBytes('0x' + requestHash))
 
     const promptText = req.messages.map(m => `${m.role}: ${m.content}`).join('\n')
@@ -194,6 +304,13 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
     const settled = new Promise<OpenAIChatResponse>((resolve, reject) => {
       pending.set(jobIdRouting, {resolve, reject})
     })
+
+    const cancelTimer = setTimeout(() => {
+      onAckTimeout(jobIdRouting).catch(err =>
+        log.error({err, routing: jobIdRouting}, 'onAckTimeout threw'),
+      )
+    }, (ACK_WINDOW_SECONDS + FAILURE_GRACE_SECONDS) * 1000)
+    failureTimers.set(jobIdRouting, {onChainJobId, deliveryDeadline, cancelTimer})
 
     // Out-of-band notify so providers can start work before they observe the
     // chain event. The on-chain `JobPosted` is the source of truth for payment.
