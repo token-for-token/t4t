@@ -14,7 +14,9 @@ import {logger} from '../../lib/logger'
 import {PssTransport} from '../../lib/swarm'
 import {providerTopic} from '../../lib/envelope'
 import {PassthroughCipher} from '../../lib/crypto'
+import {JobPostedIndex} from '../../lib/job-index'
 import {OllamaClient} from '../../lib/ollama'
+import {pssPubKeyFromWallet} from '../../lib/keys'
 import type {Hex, ModelOffering} from '../../lib/types'
 import {processJob} from './worker'
 import {JobQueue, isJobNotify} from './listener'
@@ -38,7 +40,7 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
     await ensureAllowance(chain, cfg.REGISTRY_ADDRESS, PROVIDER_INITIAL_STAKE)
     const overlay = (await bee.getNodeAddresses().catch(() => null))?.overlay ?? '0x' + '00'.repeat(32)
     await registerProvider(chain, {
-      pssPublicKey: ('0x' + '00'.repeat(32)) as Hex, // TODO: derive from Bee or wallet
+      pssPublicKey: pssPubKeyFromWallet(chain.address),
       swarmOverlay: ('0x' + overlay.toString().replace(/^0x/, '')) as Hex,
       metadataURI: '',
       initialStake: PROVIDER_INITIAL_STAKE,
@@ -73,6 +75,8 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
   })
   const queue = new JobQueue(cfg.T4T_MAX_CONCURRENT_JOBS)
   const ollama = new OllamaClient(cfg.OLLAMA_URL)
+  const jobIndex = new JobPostedIndex(chain, chain.address, log)
+  jobIndex.start()
   const signMessage = async (msg: string) =>
     (await chain.wallet.signMessage({account: chain.wallet.account!, message: msg})) as Hex
 
@@ -99,10 +103,10 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
               if (!p || !p.active) return null
               return {swarmOverlay: p.swarmOverlay, pssPublicKey: p.pssPublicKey}
             },
-            onDelivered: async ({responseHash, completionTokens}) => {
-              const onChainJobId = await resolveOnChainJobId(env.body.jobId)
+            onDelivered: async ({jobIdRouting, responseHash, completionTokens}) => {
+              const onChainJobId = await waitForOnChainJobId(jobIndex, jobIdRouting)
               if (!onChainJobId) {
-                log.warn('no on-chain jobId; skipping claim')
+                log.warn({jobIdRouting}, 'no on-chain jobId after wait; skipping claim')
                 return
               }
               const price = cfg.T4T_PRICE_PER_KTOKEN_DEFAULT
@@ -145,13 +149,22 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
 }
 
 /**
- * Resolve the routing jobId (derived from requestHash) to the on-chain jobId
- * emitted by JobEscrow. v1 stub: index `JobPosted` events. Implementation
- * deferred — wire `pub.watchContractEvent` and a small map here.
+ * Polls the JobPostedIndex briefly for the routing-id match. The PSS notify
+ * may arrive before the chain event, so we give the indexer a short window
+ * to catch up rather than dropping the claim outright.
  */
-async function resolveOnChainJobId(_routingId: Hex): Promise<Hex | null> {
-  // TODO: maintain a JobPosted event index keyed by requestHash, surface
-  // the on-chain jobId here. Without it, claimJob can't be called.
+async function waitForOnChainJobId(
+  index: JobPostedIndex,
+  routingId: Hex,
+  timeoutMs = 15_000,
+  pollMs = 500,
+): Promise<Hex | null> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const hit = index.get(routingId)
+    if (hit) return hit
+    await new Promise(r => setTimeout(r, pollMs))
+  }
   return null
 }
 

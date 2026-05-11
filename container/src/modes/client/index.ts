@@ -6,6 +6,7 @@ import {logger} from '../../lib/logger'
 import {PssTransport, uploadChunk, downloadChunk} from '../../lib/swarm'
 import {signEnvelope, clientTopic, providerTopic} from '../../lib/envelope'
 import {jsonDecrypt, jsonEncrypt, PassthroughCipher} from '../../lib/crypto'
+import {pssPubKeyFromWallet} from '../../lib/keys'
 import {selectProvider} from './selector'
 import {startClientServer} from './server'
 import type {
@@ -88,7 +89,7 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
       client: chain.address,
       modelId: req.model,
       openaiRequest: req,
-      clientPssPubKey: chain.address, // TODO: separate PSS pub key once ECIES wired
+      clientPssPubKey: pssPubKeyFromWallet(chain.address),
       ts: Math.floor(Date.now() / 1000),
     }
     const encrypted = await jsonEncrypt(cipher, target.provider.pssPublicKey, reqPayload)
