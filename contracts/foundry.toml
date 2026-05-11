@@ -7,8 +7,16 @@ script = "script"
 solc = "0.8.28"
 optimizer = true
 optimizer_runs = 200
-eth_rpc_url = "gnosis"
 fs_permissions = [{ access = "read", path = "./" }]
+
+# Fuzz / invariant defaults — overridden in CI for deeper sweeps.
+[fuzz]
+runs = 256
+
+[invariant]
+runs = 256
+depth = 500
+fail_on_revert = false
 
 [fmt]
 line_length = 110

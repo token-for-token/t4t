@@ -52,7 +52,7 @@ dev-provider: ## Run provider mode with tsx watch
 test: test-contracts test-container ## Run all tests
 
 .PHONY: test-contracts
-test-contracts: ## Forge unit tests
+test-contracts: ## Forge unit + fuzz + invariant tests
 	cd contracts && forge test -vvv
 
 .PHONY: test-contracts-gas

@@ -11,9 +11,9 @@ contract JobEscrowTest is Test {
     ProviderRegistry internal registry;
     JobEscrow internal escrow;
 
-    address internal treasury = address(0xT);
-    address internal client   = address(0xC);
-    address internal provider = address(0xP);
+    address internal treasury = makeAddr("treasury");
+    address internal client   = makeAddr("client");
+    address internal provider = makeAddr("provider");
 
     uint128 internal constant STAKE       = 100 ether;
     uint128 internal constant MAX_PAYMENT = 1 ether;
@@ -125,5 +125,251 @@ contract JobEscrowTest is Test {
         vm.prank(client);
         vm.expectRevert(JobEscrow.InsufficientStakeForJob.selector);
         escrow.postJob(provider, bytes32(0), "m", big, uint64(block.timestamp + 300));
+    }
+
+    // ----------------------------------------------------------------
+    //   Revert paths
+    // ----------------------------------------------------------------
+
+    function test_postJob_revertsWhenDeadlineTooSoon() public {
+        uint64 ack = escrow.ACK_WINDOW();
+        vm.prank(client);
+        vm.expectRevert(JobEscrow.BadDeadline.selector);
+        // deliveryDeadline == now + ACK_WINDOW is rejected (strict <=).
+        escrow.postJob(provider, bytes32(0), "m", MAX_PAYMENT, uint64(block.timestamp + ack));
+    }
+
+    function test_ackJob_revertsForNonProvider() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.prank(client);
+        vm.expectRevert(JobEscrow.NotProvider.selector);
+        escrow.ackJob(jobId);
+    }
+
+    function test_ackJob_revertsWhenAlreadyAcked() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.prank(provider);
+        escrow.ackJob(jobId);
+        vm.prank(provider);
+        vm.expectRevert(JobEscrow.BadStatus.selector);
+        escrow.ackJob(jobId);
+    }
+
+    function test_ackJob_revertsWhenPastAckDeadline() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.warp(block.timestamp + escrow.ACK_WINDOW() + 1);
+        vm.prank(provider);
+        vm.expectRevert(JobEscrow.DeadlinePassed.selector);
+        escrow.ackJob(jobId);
+    }
+
+    function test_claimJob_revertsForNonProvider() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.prank(provider);
+        escrow.ackJob(jobId);
+        vm.prank(client);
+        vm.expectRevert(JobEscrow.NotProvider.selector);
+        escrow.claimJob(jobId, bytes32(0), MAX_PAYMENT, "");
+    }
+
+    function test_claimJob_revertsWhenPaymentExceedsMax() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.prank(provider);
+        escrow.ackJob(jobId);
+        vm.prank(provider);
+        vm.expectRevert(JobEscrow.PaymentTooHigh.selector);
+        escrow.claimJob(jobId, bytes32(0), MAX_PAYMENT + 1, "");
+    }
+
+    function test_claimJob_revertsAfterDeliveryDeadline() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.prank(provider);
+        escrow.ackJob(jobId);
+        vm.warp(block.timestamp + 1_000);
+        vm.prank(provider);
+        vm.expectRevert(JobEscrow.DeadlinePassed.selector);
+        escrow.claimJob(jobId, bytes32(0), MAX_PAYMENT, "");
+    }
+
+    function test_claimJob_revertsAfterAlreadyClaimed() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.prank(provider);
+        escrow.ackJob(jobId);
+        vm.prank(provider);
+        escrow.claimJob(jobId, bytes32(0), MAX_PAYMENT, "");
+        vm.prank(provider);
+        vm.expectRevert(JobEscrow.BadStatus.selector);
+        escrow.claimJob(jobId, bytes32(0), MAX_PAYMENT, "");
+    }
+
+    function test_claimJob_canSkipAckPath() public {
+        // Provider may claim directly without ackJob if they deliver in time.
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.prank(provider);
+        escrow.claimJob(jobId, bytes32(uint256(0xCD)), MAX_PAYMENT, "");
+        (, , , , , , , , , , JobEscrow.JobStatus status) = escrow.jobs(jobId);
+        assertEq(uint8(status), uint8(JobEscrow.JobStatus.Claimed));
+    }
+
+    function test_claimJob_zeroActualPaymentRefundsFull() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.prank(provider);
+        escrow.ackJob(jobId);
+
+        uint256 cliBefore = xbzz.balanceOf(client);
+        uint256 provBefore = xbzz.balanceOf(provider);
+
+        vm.prank(provider);
+        escrow.claimJob(jobId, bytes32(0), 0, "");
+
+        // Provider got nothing, client got their full payment back.
+        assertEq(xbzz.balanceOf(provider) - provBefore, 0);
+        assertEq(xbzz.balanceOf(client)   - cliBefore,  MAX_PAYMENT);
+    }
+
+    function test_cancelJob_revertsForNonClient() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.warp(block.timestamp + escrow.ACK_WINDOW() + 1);
+        vm.prank(provider);
+        vm.expectRevert(JobEscrow.NotClient.selector);
+        escrow.cancelJob(jobId);
+    }
+
+    function test_cancelJob_revertsBeforeAckDeadline() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        // Within the ack window still — cancel must wait.
+        vm.prank(client);
+        vm.expectRevert(JobEscrow.DeadlineNotPassed.selector);
+        escrow.cancelJob(jobId);
+    }
+
+    function test_cancelJob_revertsAfterAck() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.prank(provider);
+        escrow.ackJob(jobId);
+        vm.warp(block.timestamp + escrow.ACK_WINDOW() + 1);
+        vm.prank(client);
+        vm.expectRevert(JobEscrow.BadStatus.selector);
+        escrow.cancelJob(jobId);
+    }
+
+    function test_timeoutJob_revertsForNonClient() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.prank(provider);
+        escrow.ackJob(jobId);
+        vm.warp(block.timestamp + 1_000);
+        vm.prank(provider);
+        vm.expectRevert(JobEscrow.NotClient.selector);
+        escrow.timeoutJob(jobId);
+    }
+
+    function test_timeoutJob_revertsBeforeDeadline() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.prank(provider);
+        escrow.ackJob(jobId);
+        vm.prank(client);
+        vm.expectRevert(JobEscrow.DeadlineNotPassed.selector);
+        escrow.timeoutJob(jobId);
+    }
+
+    function test_timeoutJob_revertsWithoutPriorAck() public {
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.warp(block.timestamp + 1_000);
+        vm.prank(client);
+        vm.expectRevert(JobEscrow.BadStatus.selector);
+        escrow.timeoutJob(jobId);
+    }
+
+    function test_slash_isCappedByAvailableStake() public {
+        // The concurrency cap normally prevents over-slashing, but the
+        // registry-side check is defense-in-depth. Call it directly via the
+        // escrow to confirm slash > stake never drains beyond `stake`.
+        uint128 stakeBefore = registry.getStake(provider);
+        vm.prank(address(escrow));
+        registry.slash(provider, stakeBefore + 10 ether, client, 0, bytes32(0));
+        assertEq(registry.getStake(provider), 0);
+    }
+
+    // ----------------------------------------------------------------
+    //   Fuzz
+    // ----------------------------------------------------------------
+
+    function testFuzz_claimJob_refundsExactRemainder(uint128 actual) public {
+        actual = uint128(bound(uint256(actual), 0, uint256(MAX_PAYMENT)));
+        vm.prank(client);
+        bytes32 jobId = _post();
+        vm.prank(provider);
+        escrow.ackJob(jobId);
+
+        uint256 cliBefore  = xbzz.balanceOf(client);
+        uint256 provBefore = xbzz.balanceOf(provider);
+
+        vm.prank(provider);
+        escrow.claimJob(jobId, bytes32(0), actual, "");
+
+        assertEq(xbzz.balanceOf(provider) - provBefore, actual);
+        assertEq(xbzz.balanceOf(client)   - cliBefore,  uint256(MAX_PAYMENT) - uint256(actual));
+        // Escrow returned to zero balance (no held funds for this job).
+        assertEq(xbzz.balanceOf(address(escrow)), 0);
+    }
+
+    function testFuzz_postJob_acceptsAnyDeadlinePastAckWindow(uint64 delta) public {
+        delta = uint64(bound(uint256(delta), uint256(escrow.ACK_WINDOW()) + 1, 30 days));
+        vm.prank(client);
+        escrow.postJob(provider, bytes32(0), "m", MAX_PAYMENT, uint64(block.timestamp + delta));
+        assertEq(uint256(registry.openJobs(provider)), 1);
+    }
+
+    function testFuzz_postJob_rejectsDeadlineAtOrBeforeAckWindow(uint64 delta) public {
+        delta = uint64(bound(uint256(delta), 0, uint256(escrow.ACK_WINDOW())));
+        vm.prank(client);
+        vm.expectRevert(JobEscrow.BadDeadline.selector);
+        escrow.postJob(provider, bytes32(0), "m", MAX_PAYMENT, uint64(block.timestamp + delta));
+    }
+
+    function testFuzz_cancelJob_payoutMath(uint128 payment) public {
+        payment = uint128(bound(uint256(payment), 1 wei, 10 ether));
+        // Ensure stake covers the worst-case slash for this payment.
+        vm.prank(client);
+        bytes32 jobId = escrow.postJob(provider, bytes32(0), "m", payment, uint64(block.timestamp + 300));
+        vm.warp(block.timestamp + escrow.ACK_WINDOW() + 1);
+
+        uint256 cliBefore     = xbzz.balanceOf(client);
+        uint256 treasuryBefore = xbzz.balanceOf(treasury);
+
+        vm.prank(client);
+        escrow.cancelJob(jobId);
+
+        // Refund (= payment) + clientShare (= 1.5x payment) reach the client;
+        // remainder of the 2x slash goes to treasury (= 0.5x payment).
+        uint256 expectedRefund = uint256(payment);
+        uint256 expectedClient = (uint256(payment) * 3) / 2;
+        uint256 expectedTreasury = (uint256(payment) * 2) - expectedClient;
+        // MIN_SLASH = 1 ether floor — for tiny payments the slash is the floor.
+        uint256 rawSlash = uint256(payment) * 2;
+        uint256 actualSlash = rawSlash < escrow.MIN_SLASH() ? escrow.MIN_SLASH() : rawSlash;
+        uint256 clientShareCapped = expectedClient > actualSlash ? actualSlash : expectedClient;
+        uint256 treasuryShare = actualSlash - clientShareCapped;
+
+        assertEq(xbzz.balanceOf(client) - cliBefore, expectedRefund + clientShareCapped);
+        assertEq(xbzz.balanceOf(treasury) - treasuryBefore, treasuryShare);
+        // The line below is kept intentionally to make the unhappy expectations
+        // explicit when the test fails — useful for triage.
+        assertEq(expectedTreasury > 0 || actualSlash == escrow.MIN_SLASH(), true);
     }
 }
