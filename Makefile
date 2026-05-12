@@ -105,6 +105,28 @@ deploy-chiado: build-contracts ## Deploy contracts to Chiado testnet
 		--private-key $$PRIVATE_KEY \
 		--broadcast
 
+XBZZ_MAINNET ?= 0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da
+
+.PHONY: deploy-mainnet
+deploy-mainnet: build-contracts ## Deploy contracts to Gnosis Chain mainnet (IRREVERSIBLE)
+	@test -n "$$MNEMONIC"            || { echo "Set MNEMONIC in .env";        exit 1; }
+	@test -n "$$MNEMONIC_INDEX"      || { echo "Set MNEMONIC_INDEX in .env";  exit 1; }
+	@test -n "$$ADDRESS"             || { echo "Set ADDRESS in .env (must match MNEMONIC_INDEX)"; exit 1; }
+	@test -n "$$GNOSISSCAN_API_KEY"  || { echo "Set GNOSISSCAN_API_KEY in .env (free at gnosisscan.io)"; exit 1; }
+	@test "$$CONFIRM_MAINNET" = "yes-i-mean-it" || { echo "Refusing to deploy without CONFIRM_MAINNET=yes-i-mean-it"; exit 1; }
+	@echo "→ Deploying to Gnosis Chain mainnet via $(RPC_URL)"
+	@echo "  xBZZ           : $(XBZZ_MAINNET)"
+	@echo "  Deployer/Owner : $$ADDRESS (mnemonic index $$MNEMONIC_INDEX)"
+	cd contracts && XBZZ_ADDRESS=$(XBZZ_MAINNET) TREASURY_OWNER=$$ADDRESS \
+		forge script script/Deploy.s.sol:DeployScript \
+			--rpc-url $(RPC_URL) \
+			--mnemonics "$$MNEMONIC" \
+			--mnemonic-indexes $$MNEMONIC_INDEX \
+			--sender $$ADDRESS \
+			--chain gnosis \
+			--broadcast \
+			--verify
+
 .PHONY: deploy-local
 deploy-local: build-contracts ## Deploy contracts to local Anvil
 	cd contracts && forge script script/Deploy.s.sol:DeployScript \

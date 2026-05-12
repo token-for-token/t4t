@@ -360,7 +360,7 @@ contract JobEscrowTest is Test {
         uint256 expectedRefund = uint256(payment);
         uint256 expectedClient = (uint256(payment) * 3) / 2;
         uint256 expectedTreasury = (uint256(payment) * 2) - expectedClient;
-        // MIN_SLASH = 1 ether floor — for tiny payments the slash is the floor.
+        // MIN_SLASH = 1 BZZ floor — for tiny payments the slash is the floor.
         uint256 rawSlash = uint256(payment) * 2;
         uint256 actualSlash = rawSlash < escrow.MIN_SLASH() ? escrow.MIN_SLASH() : rawSlash;
         uint256 clientShareCapped = expectedClient > actualSlash ? actualSlash : expectedClient;

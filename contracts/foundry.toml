@@ -27,3 +27,7 @@ bracket_spacing = false
 gnosis = "https://rpc.gnosischain.com"
 chiado = "https://rpc.chiadochain.net"
 local  = "http://localhost:8545"
+
+[etherscan]
+gnosis = {key = "${GNOSISSCAN_API_KEY}", url = "https://api.gnosisscan.io/api", chain = 100}
+chiado = {key = "${GNOSISSCAN_API_KEY}", url = "https://gnosis-chiado.blockscout.com/api", chain = 10200}

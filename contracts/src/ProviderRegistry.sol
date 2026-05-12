@@ -27,7 +27,8 @@ contract ProviderRegistry {
         uint64  maxLatencySeconds;
     }
 
-    uint128 public constant MIN_STAKE = 100 ether;
+    // xBZZ has 16 decimals on Gnosis (not 18). MIN_STAKE = 100 BZZ.
+    uint128 public constant MIN_STAKE = 100 * 1e16;
     uint64  public constant HEARTBEAT_TTL = 600;
     uint64  public constant UNBONDING_PERIOD = 2 days;
 

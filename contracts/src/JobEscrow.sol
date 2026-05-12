@@ -25,7 +25,8 @@ contract JobEscrow {
     }
 
     uint64  public constant ACK_WINDOW = 30;
-    uint128 public constant MIN_SLASH = 1 ether;
+    // xBZZ has 16 decimals on Gnosis (not 18). MIN_SLASH = 1 BZZ.
+    uint128 public constant MIN_SLASH = 1 * 1e16;
     /// @dev Slash multipliers used to size collateral checks and penalties.
     uint256 public constant SLASH_MULT_NO_ACK = 2;
     uint256 public constant SLASH_MULT_TIMEOUT = 3;
