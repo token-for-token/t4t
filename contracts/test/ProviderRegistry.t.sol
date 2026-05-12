@@ -86,8 +86,8 @@ contract ProviderRegistryTest is Test {
     function test_updateOfferings_replacesArray() public {
         _register();
         ProviderRegistry.ModelOffering[] memory offers = new ProviderRegistry.ModelOffering[](2);
-        offers[0] = ProviderRegistry.ModelOffering("llama3:8b", 1 ether, 8192, 120);
-        offers[1] = ProviderRegistry.ModelOffering("mistral:7b", 0.5 ether, 32768, 60);
+        offers[0] = ProviderRegistry.ModelOffering("llama3:8b", 0.2 ether, 1 ether, 8192, 120);
+        offers[1] = ProviderRegistry.ModelOffering("mistral:7b", 0.1 ether, 0.5 ether, 32768, 60);
         vm.prank(provider);
         registry.updateOfferings(offers);
         assertEq(registry.getOfferings(provider).length, 2);

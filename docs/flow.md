@@ -1,7 +1,7 @@
 # Job Flow — Client ↔ Provider
 
 How a single inference request travels from an OpenAI-compatible chat app to a
-provider's Ollama and back. The protocol contract is in [`spec.md`](spec.md) §3
+provider's inference backend and back. The protocol contract is in [`spec.md`](spec.md) §3
 and §5; this doc shows the same flow grounded in the actual container code, so
 you can follow a request through the source.
 
@@ -28,7 +28,7 @@ sequenceDiagram
     participant Swarm
     participant Chain as Gnosis Chain
     participant P as Provider container
-    participant Ollama
+    participant Backend as Inference backend (Ollama / vLLM / …)
 
     App->>C: POST /v1/chat/completions
     C->>Chain: listProviders() + getOfferings()
@@ -42,8 +42,8 @@ sequenceDiagram
     P-->>C: PSS job_ack(jobId) [topic t4t:client:<addr>]
     P->>Swarm: fetch requestHash
     P->>P: decrypt with provider PSS privkey
-    P->>Ollama: /api/chat (or /api/generate)
-    Ollama-->>P: completion + usage tokens
+    P->>Backend: POST /v1/chat/completions
+    Backend-->>P: completion + usage tokens
     P->>P: encrypt(response, client.pssPublicKey)
     P->>Swarm: upload chunk → responseHash
     P->>Chain: claimJob(jobId, responseHash, actualPayment, sig)
@@ -68,7 +68,7 @@ container runs an Express shim that mimics the OpenAI HTTP surface.
 The selector reads the on-chain registry (`listProviders`) and filters by:
 - `active && isLive` (heartbeat within `HEARTBEAT_TTL = 600s`)
 - offers requested `modelId`
-- `pricePerKToken * maxTokens ≤ user budget`
+- `(inputPricePerMillionTokens + outputPricePerMillionTokens) ≤ T4T_MAX_PRICE_PER_MILLION_TOKENS` (combined per-million cap)
 - best `maxLatencySeconds` SLA wins ties
 
 → [container/src/modes/client/selector.ts](container/src/modes/client/selector.ts) · uses
@@ -111,13 +111,13 @@ calls `JobEscrow.ackJob(jobId)` on-chain (so the client can't `cancelJob` on
 ### 7. Provider: fetch + decrypt + infer
 Worker fetches `requestHash` from Swarm, decrypts with the provider's PSS
 private key (separate from the wallet key — see commit `98974a1`), then proxies
-the decoded body to local Ollama.
+the decoded body to the configured OpenAI-compatible backend at `OPENAI_BASE_URL`.
 
 → [container/src/modes/provider/worker.ts](container/src/modes/provider/worker.ts) ·
-[container/src/lib/ollama.ts](container/src/lib/ollama.ts)
+[container/src/lib/inference.ts](container/src/lib/inference.ts)
 
 ### 8. Provider: encrypt + upload response
-The Ollama response (including `usage.completion_tokens`, which feeds
+The backend's response (including `usage.completion_tokens`, which feeds
 `actualPayment`) is encrypted to the client's `pssPublicKey` and uploaded as a
 Swarm chunk. Result: `responseHash`.
 

@@ -13,8 +13,8 @@ const PROVIDER_ENV = {
   ESCROW_ADDRESS: ADDR,
   XBZZ_ADDRESS: ADDR,
   POSTAGE_BATCH_ID: BATCH,
-  T4T_OFFERED_MODELS: 'llama3:8b',
-  T4T_PRICE_PER_KTOKEN_DEFAULT: '1000',
+  T4T_INPUT_PRICE_DEFAULT: '500000',
+  T4T_OUTPUT_PRICE_DEFAULT: '1000000',
   WALLET_KEY: KEY,
 } as Record<string, string>
 
@@ -60,7 +60,7 @@ describe('loadConfig (provider)', () => {
 })
 
 describe('loadAdminConfig', () => {
-  it('parses without T4T_MODE, OLLAMA_URL, or offered models', () => {
+  it('parses without T4T_MODE or OPENAI_BASE_URL', () => {
     withEnv(
       {
         BEE_API_URL: 'http://bee:1633',

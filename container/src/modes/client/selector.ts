@@ -7,10 +7,14 @@ export type SelectionStrategy = 'cheapest' | 'top_rep_cheapest' | 'manual'
 
 export interface SelectionContext {
   modelId: string
-  /** Optional cap (xBZZ wei per 1k tokens). */
+  /** Optional cap on (input + output) xBZZ wei per 1M tokens combined. */
   maxPrice?: bigint
   /** Required when strategy = 'manual'. */
   manualProvider?: Address
+}
+
+function combinedPrice(o: ModelOffering): bigint {
+  return o.inputPricePerMillionTokens + o.outputPricePerMillionTokens
 }
 
 export interface CandidateProvider {
@@ -52,7 +56,7 @@ export async function selectProvider(
       const offering = offerings.find(
         o =>
           o.modelId === ctx.modelId &&
-          (ctx.maxPrice === undefined || o.pricePerKToken <= ctx.maxPrice),
+          (ctx.maxPrice === undefined || combinedPrice(o) <= ctx.maxPrice),
       )
       if (offering) candidates.push({provider, offering})
     }
@@ -75,7 +79,7 @@ async function matchOffering(
 ): Promise<CandidateProvider | null> {
   const offerings = await getOfferings(chain, owner)
   const offering = offerings.find(
-    o => o.modelId === ctx.modelId && (ctx.maxPrice === undefined || o.pricePerKToken <= ctx.maxPrice),
+    o => o.modelId === ctx.modelId && (ctx.maxPrice === undefined || combinedPrice(o) <= ctx.maxPrice),
   )
   if (!offering) return null
   const {page} = await listProviders(chain, 0n, 1n)
@@ -89,7 +93,7 @@ function rank(candidates: CandidateProvider[], strategy: SelectionStrategy): Can
   if (candidates.length === 0) return null
 
   if (strategy === 'cheapest') {
-    return [...candidates].sort((a, b) => Number(a.offering.pricePerKToken - b.offering.pricePerKToken))[0]!
+    return [...candidates].sort((a, b) => Number(combinedPrice(a.offering) - combinedPrice(b.offering)))[0]!
   }
 
   // top_rep_cheapest
@@ -102,7 +106,7 @@ function rank(candidates: CandidateProvider[], strategy: SelectionStrategy): Can
     return newcomers[Math.floor(Math.random() * newcomers.length)]!
   }
   const pool = seasoned.length > 0 ? seasoned : candidates
-  return [...pool].sort((a, b) => Number(a.offering.pricePerKToken - b.offering.pricePerKToken))[0]!
+  return [...pool].sort((a, b) => Number(combinedPrice(a.offering) - combinedPrice(b.offering)))[0]!
 }
 
 function successRate(p: ProviderRow): number {

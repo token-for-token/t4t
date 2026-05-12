@@ -126,7 +126,8 @@ struct Provider {
 
 struct ModelOffering {
     string  modelId;          // e.g. "llama3:70b-instruct-q4_K_M"
-    uint128 pricePerKToken;   // xBZZ per 1,000 output tokens
+    uint128 inputPricePerMillionTokens;   // xBZZ wei per 1M prompt tokens
+    uint128 outputPricePerMillionTokens;  // xBZZ wei per 1M completion tokens
     uint128 maxContextTokens;
     uint64  maxLatencySeconds; // declared SLA
 }
@@ -352,7 +353,7 @@ Additional env:
 |---|---|---|
 | `T4T_HTTP_PORT` | `8080` | OpenAI-compatible API port |
 | `T4T_SELECTION_STRATEGY` | `top_rep_cheapest` | `cheapest`, `top_rep_cheapest`, `manual` |
-| `T4T_MAX_PRICE_PER_KTOKEN` | unset | upper bound in xBZZ |
+| `T4T_MAX_PRICE_PER_MILLION_TOKENS` | unset | upper bound on (input + output) xBZZ wei per 1M tokens combined |
 | `T4T_DEFAULT_DEADLINE_SECONDS` | `300` | per-job |
 | `T4T_FAKE_STREAMING` | `true` | emulate SSE for `stream: true` |
 
@@ -368,17 +369,18 @@ Behavior on `stream: true` with `T4T_FAKE_STREAMING=true`: hold the connection, 
 Additional env:
 | Variable | Default | Description |
 |---|---|---|
-| `OLLAMA_URL` | `http://host.docker.internal:11434` | Ollama API |
-| `T4T_OFFERED_MODELS` | required | comma-list of Ollama tags |
-| `T4T_PRICE_PER_KTOKEN_DEFAULT` | required | xBZZ |
+| `OPENAI_BASE_URL` | `http://host.docker.internal:11434` | OpenAI-compatible inference backend (Ollama, vLLM, LiteLLM, llama.cpp, OpenAI itself). |
+| `OPENAI_API_KEY` | _unset_ | Bearer token for backends that require auth (vLLM with `--api-key`, OpenAI, etc.). Omit for Ollama. |
+| `T4T_INPUT_PRICE_DEFAULT` | required | xBZZ wei per 1M prompt tokens, applied to newly-discovered models only. Per-model prices live on-chain in `ModelOffering.inputPricePerMillionTokens` and are editable from the admin UI. |
+| `T4T_OUTPUT_PRICE_DEFAULT` | required | xBZZ wei per 1M completion tokens, same semantics as the input default. |
 | `T4T_HEARTBEAT_INTERVAL_SECONDS` | `300` | |
 | `T4T_MAX_CONCURRENT_JOBS` | `2` | |
 
 Behavior:
-1. On start: read state, register if needed, push offerings, begin heartbeat loop.
+1. On start: read state, register if needed, query the backend's `GET /v1/models`, read existing on-chain offerings, build merged set (preserve any per-model prices already on-chain; apply `T4T_INPUT_PRICE_DEFAULT` and `T4T_OUTPUT_PRICE_DEFAULT` to newly-seen models), publish via `updateOfferings` only if the merged set differs from chain, begin heartbeat loop. To stop serving a model, remove it from the backend and restart. To change a model's prices, use the admin UI's Models page (writes via `updateOfferings`). At claim time: `actualPayment = (inputPrice·promptTokens + outputPrice·completionTokens) / 1_000_000`.
 2. Subscribe to `t4t:provider:<address>`.
 3. On `job_notify`: validate registry pricing matches, ACK within `ACK_WINDOW / 2`.
-4. Fetch + decrypt request, call Ollama, encrypt + upload response, send `job_deliver`.
+4. Fetch + decrypt request, call the inference backend at `OPENAI_BASE_URL/v1/chat/completions`, encrypt + upload response, send `job_deliver`.
 5. Call `claimJob` on the chain.
 
 ---
@@ -437,7 +439,7 @@ t4t/
 │   │   │   ├── envelope.ts            # PSS envelope sign/verify (mirrors SwarmChat)
 │   │   │   ├── swarm.ts               # upload/download + stamp mgmt
 │   │   │   ├── chain.ts               # contract bindings (viem)
-│   │   │   ├── ollama.ts              # Ollama OpenAI-compat passthrough
+│   │   │   ├── inference.ts           # OpenAI-compatible backend client (Ollama/vLLM/…)
 │   │   │   └── crypto.ts              # ECIES-style encrypt/decrypt for payloads
 │   │   └── index.ts                   # mode dispatch
 │   ├── test/
@@ -470,7 +472,7 @@ t4t/
 
 ## 13. Open Questions
 
-- Settlement currency for token-billed payments: provider declares `pricePerKToken`, but inference cost depends on *output* tokens. Should `maxPayment` include a safety multiple, with the contract enforcing `actualPayment ≤ maxPayment` based on `usage.completion_tokens` in the response? Probably yes — clients sign a bound, providers report actuals, on-chain `claimJob` enforces.
+- Settlement currency for token-billed payments: provider declares `inputPricePerMillionTokens` + `outputPricePerMillionTokens`. Cost depends on both prompt and completion tokens. Client signs a `maxPayment` bound; provider reports actual usage at `claimJob`; on-chain logic enforces `actualPayment ≤ maxPayment` and refunds the difference.
 - Should client signatures on response receipt be required for fastest settlement, with a fallback to time-based finalization if the client is unreachable? Leaning yes.
 - Heartbeat on-chain vs off-chain: on-chain costs gas, off-chain needs a separate gossip mechanism. Cheapest path is a once-per-5-min on-chain `heartbeat()` — at Gnosis gas prices, negligible.
 - Postage stamp issuance flow inside the provider container: pre-buy a long-lived deep batch at startup, or buy per-job? Pre-buy is faster and simpler.

@@ -57,9 +57,10 @@ export interface ProviderRow {
 
 export interface ModelOffering {
   modelId: string
-  pricePerKToken: bigint
+  inputPricePerMillionTokens: bigint
+  outputPricePerMillionTokens: bigint
   maxContextTokens: bigint
-  maxLatencySeconds: number
+  maxLatencySeconds: bigint
 }
 
 // ---------- Swarm payload (spec §6) ----------

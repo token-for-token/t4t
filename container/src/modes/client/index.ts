@@ -238,15 +238,20 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
   async function handleChat(req: OpenAIChatRequest): Promise<OpenAIChatResponse> {
     const target = await selectProvider(chain, cfg.T4T_SELECTION_STRATEGY, {
       modelId: req.model,
-      maxPrice: cfg.T4T_MAX_PRICE_PER_KTOKEN,
+      maxPrice: cfg.T4T_MAX_PRICE_PER_MILLION_TOKENS,
       manualProvider: cfg.T4T_MANUAL_PROVIDER,
     })
     if (!target) throw new Error(`no provider matches model=${req.model}`)
 
-    // Conservative ceiling: maxPrice × (max_tokens/1000), round up by one
-    // unit to absorb usage drift. Real apps should tune this per workload.
+    // Conservative ceiling: assume prompt tokens ≈ max_tokens (most prompts are
+    // shorter, this overshoots safely) and budget at the full split rate, plus
+    // one million-tokens worth of headroom on each side to absorb usage drift.
+    // The provider only claims the actual amount; the contract refunds the rest.
     const maxTokens = BigInt(req.max_tokens ?? 1024)
-    const maxPayment = (target.offering.pricePerKToken * (maxTokens + 1000n)) / 1000n
+    const headroom = 1_000_000n
+    const inPay = target.offering.inputPricePerMillionTokens * (maxTokens + headroom)
+    const outPay = target.offering.outputPricePerMillionTokens * (maxTokens + headroom)
+    const maxPayment = (inPay + outPay) / 1_000_000n
     await ensureAllowance(chain, cfg.ESCROW_ADDRESS, maxPayment)
 
     const jobIdLocal = toHex(crypto.getRandomValues(new Uint8Array(32)))

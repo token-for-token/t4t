@@ -16,7 +16,7 @@ export interface LayoutOpts {
   title: string
   refreshSeconds: number
   body: string
-  active: 'jobs' | 'status' | 'models'
+  active: 'jobs' | 'status' | 'models' | 'providers'
 }
 
 export function layout(opts: LayoutOpts): string {
@@ -68,7 +68,8 @@ export function layout(opts: LayoutOpts): string {
     <nav>
       ${tab('jobs', '/admin', 'Jobs')}
       ${tab('status', '/admin/status', 'Status')}
-      ${opts.active === 'models' ? tab('models', '/admin/models', 'Models') : ''}
+      ${tab('models', '/admin/models', 'Models')}
+      ${tab('providers', '/admin/providers', 'Providers')}
     </nav>
   </header>
   <main hx-target="this" hx-swap="innerHTML">

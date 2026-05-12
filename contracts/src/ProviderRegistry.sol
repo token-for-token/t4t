@@ -22,7 +22,12 @@ contract ProviderRegistry {
 
     struct ModelOffering {
         string  modelId;
-        uint128 pricePerKToken;
+        // xBZZ wei per 1,000,000 tokens, split input (prompt) vs output (completion).
+        // Per-million is the industry-standard pricing unit (OpenAI, Anthropic, …);
+        // separate in/out rates because generation is typically 3-5x more expensive
+        // than prefill on identical hardware.
+        uint128 inputPricePerMillionTokens;
+        uint128 outputPricePerMillionTokens;
         uint128 maxContextTokens;
         uint64  maxLatencySeconds;
     }

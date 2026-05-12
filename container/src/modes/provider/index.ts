@@ -4,6 +4,7 @@ import type {ProviderConfig} from '../../lib/config'
 import {
   claimJob,
   deactivateProvider,
+  getOfferings,
   getProvider,
   makeChain,
   registerProvider,
@@ -17,7 +18,7 @@ import {providerTopic} from '../../lib/envelope'
 import {EciesCipher} from '../../lib/crypto'
 import {JobPostedIndex} from '../../lib/job-index'
 import {JobsDb} from '../../lib/jobs-db'
-import {OllamaClient} from '../../lib/ollama'
+import {InferenceClient} from '../../lib/inference'
 import {loadOrCreatePssKey} from '../../lib/keys'
 import type {Hex, ModelOffering} from '../../lib/types'
 import {startAdminServer} from './admin'
@@ -65,22 +66,125 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
     )
   }
 
-  const offerings: ModelOffering[] = cfg.T4T_OFFERED_MODELS.split(',')
-    .map(s => s.trim())
-    .filter(Boolean)
-    .map(modelId => ({
+  const inference = new InferenceClient(cfg.OPENAI_BASE_URL, cfg.OPENAI_API_KEY)
+  // Offerings = whatever the backend currently serves. To stop offering a model,
+  // remove it from the backend (e.g. `ollama rm <model>`) and restart.
+  const modelIds = await inference.listModels().catch(err => {
+    log.fatal({err, backend: cfg.OPENAI_BASE_URL}, 'inference backend unreachable; cannot determine offerings')
+    process.exit(1)
+  })
+  // Merge: preserve any on-chain price the operator has set previously
+  // (e.g. edited via the admin UI). Only newly-seen models get env defaults.
+  const onChainOfferings = await getOfferings(chain, chain.address).catch(() => [] as ModelOffering[])
+  const existingByModel = new Map(onChainOfferings.map(o => [o.modelId, o]))
+  const offeringsByModel = new Map<string, ModelOffering>()
+  for (const modelId of modelIds) {
+    const prior = existingByModel.get(modelId)
+    offeringsByModel.set(modelId, {
       modelId,
-      pricePerKToken: cfg.T4T_PRICE_PER_KTOKEN_DEFAULT,
-      maxContextTokens: 0n,
-      maxLatencySeconds: 120,
-    }))
-  if (offerings.length > 0) {
-    await updateOfferings(chain, offerings)
-    log.info({count: offerings.length}, 'offerings published')
+      inputPricePerMillionTokens: prior?.inputPricePerMillionTokens ?? cfg.T4T_INPUT_PRICE_DEFAULT,
+      outputPricePerMillionTokens: prior?.outputPricePerMillionTokens ?? cfg.T4T_OUTPUT_PRICE_DEFAULT,
+      maxContextTokens: prior?.maxContextTokens ?? 0n,
+      maxLatencySeconds: prior?.maxLatencySeconds ?? 120n,
+    })
+  }
+
+  async function publishOfferings(): Promise<void> {
+    const arr = [...offeringsByModel.values()]
+    if (arr.length === 0) {
+      log.warn({backend: cfg.OPENAI_BASE_URL}, 'backend reports zero models — provider will not receive jobs until at least one model is loaded')
+      return
+    }
+    await updateOfferings(chain, arr)
+    log.info({count: arr.length, models: arr.map(o => o.modelId)}, 'offerings published')
+  }
+
+  // Publish only if the merged set differs from on-chain — avoids gas on a noop restart.
+  const sameAsChain =
+    onChainOfferings.length === offeringsByModel.size &&
+    onChainOfferings.every(o => {
+      const cur = offeringsByModel.get(o.modelId)
+      return (
+        cur &&
+        cur.inputPricePerMillionTokens === o.inputPricePerMillionTokens &&
+        cur.outputPricePerMillionTokens === o.outputPricePerMillionTokens
+      )
+    })
+  if (!sameAsChain) await publishOfferings()
+  else log.info({count: offeringsByModel.size}, 'offerings already match on-chain; skip publish')
+
+  function buildOffering(modelId: string): ModelOffering {
+    const prior = offeringsByModel.get(modelId) ?? existingByModel.get(modelId)
+    return {
+      modelId,
+      inputPricePerMillionTokens: prior?.inputPricePerMillionTokens ?? cfg.T4T_INPUT_PRICE_DEFAULT,
+      outputPricePerMillionTokens: prior?.outputPricePerMillionTokens ?? cfg.T4T_OUTPUT_PRICE_DEFAULT,
+      maxContextTokens: prior?.maxContextTokens ?? 0n,
+      maxLatencySeconds: prior?.maxLatencySeconds ?? 120n,
+    }
+  }
+
+  function offeringsDiffer(next: Map<string, ModelOffering>): boolean {
+    if (next.size !== offeringsByModel.size) return true
+    for (const [id, n] of next) {
+      const cur = offeringsByModel.get(id)
+      if (!cur) return true
+      if (cur.inputPricePerMillionTokens !== n.inputPricePerMillionTokens) return true
+      if (cur.outputPricePerMillionTokens !== n.outputPricePerMillionTokens) return true
+    }
+    return false
+  }
+
+  async function healthTick(): Promise<void> {
+    // 1. Backend reachable?
+    let modelIds: string[]
+    try {
+      modelIds = await inference.listModels()
+    } catch (err) {
+      log.warn({err}, 'skip heartbeat — backend listModels failed; on-chain liveness will lapse')
+      return
+    }
+
+    // 2. Probe each model the backend claims to serve. A model that fails the
+    //    probe is dropped from offerings this round; clients won't route to it.
+    const live: string[] = []
+    for (const id of modelIds) {
+      try {
+        await inference.probeModel(id)
+        live.push(id)
+      } catch (err) {
+        log.warn({err, model: id}, 'model probe failed; dropping from offerings')
+      }
+    }
+    if (live.length === 0) {
+      log.warn('no models survived probe — skip heartbeat')
+      return
+    }
+
+    // 3. Sync the on-chain offering set with what's actually live.
+    const next = new Map<string, ModelOffering>()
+    for (const id of live) next.set(id, buildOffering(id))
+    if (offeringsDiffer(next)) {
+      try {
+        await updateOfferings(chain, [...next.values()])
+        offeringsByModel.clear()
+        for (const [k, v] of next) offeringsByModel.set(k, v)
+        log.info({models: [...offeringsByModel.keys()]}, 'offerings re-published after backend change')
+      } catch (err) {
+        log.warn({err}, 'updateOfferings failed; keeping previous on-chain set')
+      }
+    }
+
+    // 4. Heartbeat — only now do we tell the chain we're alive.
+    try {
+      await sendHeartbeat(chain)
+    } catch (err) {
+      log.warn({err}, 'heartbeat failed')
+    }
   }
 
   setInterval(() => {
-    sendHeartbeat(chain).catch(err => log.warn({err}, 'heartbeat failed'))
+    healthTick().catch(err => log.warn({err}, 'health tick crashed'))
   }, cfg.T4T_HEARTBEAT_INTERVAL_SECONDS * 1000)
 
   const cipher = new EciesCipher(pssKeys.privateKey)
@@ -91,7 +195,6 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
     selfAddress: chain.address,
   })
   const queue = new JobQueue(cfg.T4T_MAX_CONCURRENT_JOBS)
-  const ollama = new OllamaClient(cfg.OLLAMA_URL)
   const jobIndex = new JobPostedIndex(chain, chain.address, log)
   jobIndex.start()
   const db = new JobsDb({path: join(cfg.T4T_DATA_DIR, 'jobs.db')})
@@ -145,7 +248,7 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
             bee,
             postageBatchId: cfg.POSTAGE_BATCH_ID,
             pss,
-            ollama,
+            inference,
             cipher,
             selfAddress: chain.address,
             signMessage,
@@ -154,7 +257,7 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
               if (!p || !p.active) return null
               return {swarmOverlay: p.swarmOverlay, pssPublicKey: p.pssPublicKey}
             },
-            onDelivered: async ({jobIdRouting: routing, responseHash, completionTokens}) => {
+            onDelivered: async ({jobIdRouting: routing, responseHash, promptTokens, completionTokens}) => {
               const onChainJobId = await waitForOnChainJobId(jobIndex, routing)
               if (!onChainJobId) {
                 log.warn({jobIdRouting: routing}, 'no on-chain jobId after wait; skipping claim')
@@ -174,8 +277,12 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
                 })
                 return
               }
-              const price = cfg.T4T_PRICE_PER_KTOKEN_DEFAULT
-              const actual = (price * BigInt(completionTokens)) / 1000n
+              const o = offeringsByModel.get(env.body.modelId)
+              const inPrice = o?.inputPricePerMillionTokens ?? cfg.T4T_INPUT_PRICE_DEFAULT
+              const outPrice = o?.outputPricePerMillionTokens ?? cfg.T4T_OUTPUT_PRICE_DEFAULT
+              const actual =
+                (inPrice * BigInt(promptTokens) + outPrice * BigInt(completionTokens)) /
+                1_000_000n
               await claimJob(chain, {
                 jobId: onChainJobId,
                 responseHash: ('0x' + responseHash) as Hex,
@@ -233,6 +340,8 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
     bee,
     queue,
     logger: log,
+    offerings: offeringsByModel,
+    publishOfferings,
   })
 
   if (cfg.T4T_DEACTIVATE_ON_SHUTDOWN) {
@@ -250,7 +359,7 @@ export async function runProvider(cfg: ProviderConfig): Promise<void> {
     process.on('SIGINT', onSignal)
   }
 
-  log.info({offerings: offerings.length, concurrency: cfg.T4T_MAX_CONCURRENT_JOBS}, 'provider ready')
+  log.info({offerings: offeringsByModel.size, concurrency: cfg.T4T_MAX_CONCURRENT_JOBS}, 'provider ready')
 }
 
 /**

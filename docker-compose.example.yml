@@ -52,15 +52,22 @@ services:
     environment:
       T4T_MODE: provider
       BEE_API_URL: http://bee:1633
-      OLLAMA_URL: http://ollama:11434
+      # Any OpenAI-compatible backend: Ollama (:11434), vLLM (:8000), LiteLLM, …
+      OPENAI_BASE_URL: http://ollama:11434
+      # OPENAI_API_KEY: ${OPENAI_API_KEY}   # uncomment for vLLM/cloud backends that require auth
       GNOSIS_RPC_URL: ${GNOSIS_RPC_URL}
       REGISTRY_ADDRESS: ${REGISTRY_ADDRESS}
       ESCROW_ADDRESS: ${ESCROW_ADDRESS}
       XBZZ_ADDRESS: ${XBZZ_ADDRESS}
       POSTAGE_BATCH_ID: ${POSTAGE_BATCH_ID}
       WALLET_KEY: ${PROVIDER_WALLET_KEY}
-      T4T_OFFERED_MODELS: llama3:8b,mistral:7b
-      T4T_PRICE_PER_KTOKEN_DEFAULT: "1000000000000000"  # 0.001 xBZZ / 1k tokens
+      # Offerings are auto-discovered from the backend's /v1/models.
+      # To stop offering a model, remove it from the backend (e.g. `ollama rm <model>`) and restart.
+      # Default prices applied to newly-discovered models. Per-model overrides
+      # live on-chain and are editable from http://localhost:8090/admin/models.
+      # Values are xBZZ wei per 1M tokens; xBZZ has 16 decimals so 1e16 wei = 1 BZZ.
+      T4T_INPUT_PRICE_DEFAULT:  "3000000000000000"   # 0.3 BZZ / 1M input tokens
+      T4T_OUTPUT_PRICE_DEFAULT: "15000000000000000"  # 1.5 BZZ / 1M output tokens
       T4T_HEARTBEAT_INTERVAL_SECONDS: "300"
       T4T_MAX_CONCURRENT_JOBS: "2"
 

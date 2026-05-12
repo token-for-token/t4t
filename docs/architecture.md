@@ -21,7 +21,8 @@ A two-page tour. The protocol spec lives in [`spec.md`](spec.md); this doc orien
                   └──► lib/crypto    (ECIES — passthrough in v1)
                                               │
                                               ▼
-                                       lib/ollama.ts → Ollama
+                                       lib/inference.ts → OpenAI-compatible backend
+                                                          (Ollama / vLLM / …)
 ```
 
 ## Where things live
@@ -38,7 +39,7 @@ A two-page tour. The protocol spec lives in [`spec.md`](spec.md); this doc orien
 | viem chain bindings | `container/src/lib/chain.ts` |
 | ABIs | `container/src/lib/abi.ts` |
 | Payload cipher (ECIES) | `container/src/lib/crypto.ts` |
-| Ollama HTTP passthrough | `container/src/lib/ollama.ts` |
+| Inference backend HTTP passthrough (Ollama, vLLM, …) | `container/src/lib/inference.ts` |
 | Config + env validation | `container/src/lib/config.ts` |
 | Contracts | `contracts/src/*.sol` |
 

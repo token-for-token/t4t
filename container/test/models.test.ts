@@ -60,11 +60,11 @@ describe('ModelDiscovery', () => {
     const offerings = new Map<string, ModelOffering[]>([
       [
         ALICE.toLowerCase(),
-        [{modelId: 'llama3:8b', pricePerKToken: 100n, maxContextTokens: 0n, maxLatencySeconds: 60}],
+        [{modelId: 'llama3:8b', inputPricePerMillionTokens: 50n, outputPricePerMillionTokens: 100n, maxContextTokens: 0n, maxLatencySeconds: 60}],
       ],
       [
         BOB.toLowerCase(),
-        [{modelId: 'llama3:8b', pricePerKToken: 200n, maxContextTokens: 0n, maxLatencySeconds: 120}],
+        [{modelId: 'llama3:8b', inputPricePerMillionTokens: 80n, outputPricePerMillionTokens: 200n, maxContextTokens: 0n, maxLatencySeconds: 120}],
       ],
     ])
     const d = new ModelDiscovery({
@@ -77,7 +77,8 @@ describe('ModelDiscovery', () => {
     expect(summaries[0]).toMatchObject({
       id: 'llama3:8b',
       providerCount: 2,
-      minPricePerKToken: 100n,
+      minInputPrice: 50n,
+      minOutputPrice: 100n,
       slowestSlaSeconds: 120,
     })
   })
@@ -85,7 +86,7 @@ describe('ModelDiscovery', () => {
   it('drops models below T4T_MIN_PROVIDERS_PER_MODEL', async () => {
     const providers = [mkProvider({owner: ALICE})]
     const offerings = new Map<string, ModelOffering[]>([
-      [ALICE.toLowerCase(), [{modelId: 'rare', pricePerKToken: 1n, maxContextTokens: 0n, maxLatencySeconds: 1}]],
+      [ALICE.toLowerCase(), [{modelId: 'rare', inputPricePerMillionTokens: 1n, outputPricePerMillionTokens: 1n, maxContextTokens: 0n, maxLatencySeconds: 1}]],
     ])
     const d = new ModelDiscovery({
       chain: mkChain(providers, offerings),
@@ -101,8 +102,8 @@ describe('ModelDiscovery', () => {
       [
         ALICE.toLowerCase(),
         [
-          {modelId: 'allowed', pricePerKToken: 1n, maxContextTokens: 0n, maxLatencySeconds: 1},
-          {modelId: 'blocked', pricePerKToken: 2n, maxContextTokens: 0n, maxLatencySeconds: 2},
+          {modelId: 'allowed', inputPricePerMillionTokens: 1n, outputPricePerMillionTokens: 1n, maxContextTokens: 0n, maxLatencySeconds: 1},
+          {modelId: 'blocked', inputPricePerMillionTokens: 1n, outputPricePerMillionTokens: 2n, maxContextTokens: 0n, maxLatencySeconds: 2},
         ],
       ],
     ])
@@ -123,8 +124,8 @@ describe('ModelDiscovery', () => {
       mkProvider({owner: BOB, lastHeartbeat: stale}),
     ]
     const offerings = new Map<string, ModelOffering[]>([
-      [ALICE.toLowerCase(), [{modelId: 'm', pricePerKToken: 1n, maxContextTokens: 0n, maxLatencySeconds: 1}]],
-      [BOB.toLowerCase(), [{modelId: 'm', pricePerKToken: 1n, maxContextTokens: 0n, maxLatencySeconds: 1}]],
+      [ALICE.toLowerCase(), [{modelId: 'm', inputPricePerMillionTokens: 1n, outputPricePerMillionTokens: 1n, maxContextTokens: 0n, maxLatencySeconds: 1}]],
+      [BOB.toLowerCase(), [{modelId: 'm', inputPricePerMillionTokens: 1n, outputPricePerMillionTokens: 1n, maxContextTokens: 0n, maxLatencySeconds: 1}]],
     ])
     const d = new ModelDiscovery({
       chain: mkChain(providers, offerings),
@@ -138,7 +139,7 @@ describe('ModelDiscovery', () => {
     let scanCount = 0
     const providers = [mkProvider({owner: ALICE})]
     const offerings = new Map<string, ModelOffering[]>([
-      [ALICE.toLowerCase(), [{modelId: 'm', pricePerKToken: 1n, maxContextTokens: 0n, maxLatencySeconds: 1}]],
+      [ALICE.toLowerCase(), [{modelId: 'm', inputPricePerMillionTokens: 1n, outputPricePerMillionTokens: 1n, maxContextTokens: 0n, maxLatencySeconds: 1}]],
     ])
     const baseChain = mkChain(providers, offerings)
     const chain = {

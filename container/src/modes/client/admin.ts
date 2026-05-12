@@ -77,6 +77,18 @@ export function startAdminServer(deps: ClientAdminDeps): void {
     )
   })
 
+  app.get('/admin/providers', async (_req, res) => {
+    const providers = await deps.discovery.listProviders().catch(() => [])
+    res.send(
+      layout({
+        title: 't4t client',
+        refreshSeconds: deps.statusRefreshSeconds,
+        active: 'providers',
+        body: providersPage(providers),
+      }),
+    )
+  })
+
   app.listen(deps.port, deps.host, () =>
     deps.logger.info({host: deps.host, port: deps.port}, 'admin ui listening'),
   )
@@ -176,14 +188,16 @@ function statusPanels(s: Record<string, unknown>): string {
 
 function modelsPage(models: import('./models').ModelSummary[]): string {
   const body = models.length === 0
-    ? `<tr><td colspan="5" class="muted">No models discovered yet.</td></tr>`
+    ? `<tr><td colspan="7" class="muted">No models discovered yet.</td></tr>`
     : models
         .map(
           m => `<tr>
         <td>${escape(m.id)}</td>
         <td>${escape(m.providerCount)}</td>
-        <td>${escape(formatXBZZ(m.minPricePerKToken))}</td>
-        <td>${escape(formatXBZZ(m.medianPricePerKToken))}</td>
+        <td>${escape(formatXBZZ(m.minInputPrice))}</td>
+        <td>${escape(formatXBZZ(m.medianInputPrice))}</td>
+        <td>${escape(formatXBZZ(m.minOutputPrice))}</td>
+        <td>${escape(formatXBZZ(m.medianOutputPrice))}</td>
         <td>${escape(m.slowestSlaSeconds)}s</td>
       </tr>`,
         )
@@ -191,13 +205,57 @@ function modelsPage(models: import('./models').ModelSummary[]): string {
   return `
 <section>
   <h2>Discovered models</h2>
+  <p class="muted">Prices are xBZZ wei per 1,000,000 tokens (input = prompt, output = completion).</p>
   <table>
     <thead><tr>
-      <th>Model</th><th>Providers</th><th>Min price / 1k</th><th>Median price / 1k</th><th>Slowest SLA</th>
+      <th>Model</th><th>Providers</th><th>Min in / 1M</th><th>Median in / 1M</th><th>Min out / 1M</th><th>Median out / 1M</th><th>Slowest SLA</th>
     </tr></thead>
     <tbody>${body}</tbody>
   </table>
 </section>`
+}
+
+function providersPage(providers: import('./models').ProviderListing[]): string {
+  if (providers.length === 0) {
+    return `<section><h2>Providers</h2><p class="muted">No live providers discovered yet.</p></section>`
+  }
+  const sections = providers
+    .map(({provider: p, offerings}) => {
+      const successRate = p.totalJobs === 0 ? '—' : `${Math.round((p.successfulJobs * 100) / p.totalJobs)}%`
+      const rows = offerings
+        .map(
+          o => `<tr>
+        <td>${escape(o.modelId)}</td>
+        <td>${escape(formatXBZZ(o.inputPricePerMillionTokens))}</td>
+        <td>${escape(formatXBZZ(o.outputPricePerMillionTokens))}</td>
+        <td>${escape(o.maxLatencySeconds)}s</td>
+        <td>${o.maxContextTokens === 0n ? '<span class="muted">—</span>' : escape(o.maxContextTokens)}</td>
+      </tr>`,
+        )
+        .join('')
+      return `
+<section>
+  <h2 class="mono">${escape(p.owner)}</h2>
+  <dl class="kv">
+    <dt>Stake</dt><dd>${escape(formatXBZZ(p.stake))} xBZZ</dd>
+    <dt>Jobs (success / total)</dt><dd>${escape(p.successfulJobs)} / ${escape(p.totalJobs)} (${escape(successRate)})</dd>
+    <dt>Last heartbeat</dt><dd>${escape(formatTs(p.lastHeartbeat))}</dd>
+  </dl>
+  <table>
+    <thead><tr>
+      <th>Model</th><th>Input / 1M</th><th>Output / 1M</th><th>SLA</th><th>Max ctx</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+</section>`
+    })
+    .join('')
+  return `
+<section>
+  <h2>Live providers</h2>
+  <p class="muted">Active, heartbeat-fresh providers. Prices are xBZZ wei per 1,000,000 tokens.</p>
+</section>
+${sections}`
 }
 
 async function collectStatus(deps: ClientAdminDeps): Promise<Record<string, unknown>> {

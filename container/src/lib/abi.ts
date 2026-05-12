@@ -27,7 +27,8 @@ export const providerRegistryAbi = [
         type: 'tuple[]',
         components: [
           {name: 'modelId', type: 'string'},
-          {name: 'pricePerKToken', type: 'uint128'},
+          {name: 'inputPricePerMillionTokens', type: 'uint128'},
+          {name: 'outputPricePerMillionTokens', type: 'uint128'},
           {name: 'maxContextTokens', type: 'uint128'},
           {name: 'maxLatencySeconds', type: 'uint64'},
         ],
@@ -77,7 +78,8 @@ export const providerRegistryAbi = [
         type: 'tuple[]',
         components: [
           {name: 'modelId', type: 'string'},
-          {name: 'pricePerKToken', type: 'uint128'},
+          {name: 'inputPricePerMillionTokens', type: 'uint128'},
+          {name: 'outputPricePerMillionTokens', type: 'uint128'},
           {name: 'maxContextTokens', type: 'uint128'},
           {name: 'maxLatencySeconds', type: 'uint64'},
         ],

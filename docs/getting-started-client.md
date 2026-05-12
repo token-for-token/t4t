@@ -58,7 +58,7 @@ For Open WebUI / LibreChat / Continue.dev, set the base URL to `http://localhost
 
 ## How payment flows
 
-1. Client picks a provider from the on-chain registry that offers the requested model within `T4T_MAX_PRICE_PER_KTOKEN`.
-2. Client uploads the encrypted request to Swarm, then calls `JobEscrow.postJob`, locking `maxPayment = price × (maxTokens + 1k) / 1k`.
-3. Provider runs inference, uploads the response, and calls `claimJob` for the actual completion-token cost. The difference refunds back.
+1. Client picks a provider from the on-chain registry that offers the requested model within `T4T_MAX_PRICE_PER_MILLION_TOKENS` (cap on input + output combined).
+2. Client uploads the encrypted request to Swarm, then calls `JobEscrow.postJob`, locking a conservative `maxPayment` derived from the provider's per-model input/output rates and the requested `max_tokens`.
+3. Provider runs inference, uploads the response, and calls `claimJob` for the actual cost: `(inputPrice·promptTokens + outputPrice·completionTokens) / 1M`. The difference refunds back.
 4. If the provider never ACKs or never delivers, the client cancels/times-out the job; stake is slashed and you get a refund + apology.

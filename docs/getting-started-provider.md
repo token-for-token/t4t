@@ -16,7 +16,7 @@ ollama pull llama3:8b
 ollama pull mistral:7b
 ```
 
-Your container will register these on-chain as your offerings.
+On startup the container queries the backend's `GET /v1/models` and registers every model it finds as an on-chain offering. To stop serving a model, remove it from the backend (`ollama rm <model>` or unload it from vLLM) and restart the container.
 
 ## 3. Configure
 
@@ -24,15 +24,16 @@ Your container will register these on-chain as your offerings.
 |---|---|
 | `T4T_MODE` | `provider` |
 | `BEE_API_URL` | `http://localhost:1633` |
-| `OLLAMA_URL` | `http://host.docker.internal:11434` |
+| `OPENAI_BASE_URL` | `http://host.docker.internal:11434` (Ollama) or `http://vllm:8000` (vLLM) |
+| `OPENAI_API_KEY` | _optional_ — set for vLLM with `--api-key` or cloud backends |
 | `GNOSIS_RPC_URL` | `https://rpc.gnosischain.com` |
 | `REGISTRY_ADDRESS` | `0x…` |
 | `ESCROW_ADDRESS` | `0x…` |
 | `XBZZ_ADDRESS` | `0x…` |
 | `POSTAGE_BATCH_ID` | 64-char hex |
 | `WALLET_KEY` | `0x…` |
-| `T4T_OFFERED_MODELS` | `llama3:8b,mistral:7b` |
-| `T4T_PRICE_PER_KTOKEN_DEFAULT` | xBZZ wei per 1k output tokens |
+| `T4T_INPUT_PRICE_DEFAULT` | xBZZ wei per 1M prompt tokens for newly-seen models; per-model overrides live on-chain via the admin UI |
+| `T4T_OUTPUT_PRICE_DEFAULT` | xBZZ wei per 1M completion tokens, same semantics |
 | `T4T_HEARTBEAT_INTERVAL_SECONDS` | `300` |
 | `T4T_MAX_CONCURRENT_JOBS` | `2` |
 

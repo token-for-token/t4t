@@ -8,10 +8,14 @@ export interface ModelSummary {
   id: string
   /** Active, heartbeat-fresh providers advertising this model. */
   providerCount: number
-  /** xBZZ wei per 1k tokens, across providers. */
-  minPricePerKToken: bigint
-  /** Median price per 1k tokens — useful for the admin UI. */
-  medianPricePerKToken: bigint
+  /** Min input price (xBZZ wei per 1M tokens) across providers. */
+  minInputPrice: bigint
+  /** Median input price. */
+  medianInputPrice: bigint
+  /** Min output price (xBZZ wei per 1M tokens) across providers. */
+  minOutputPrice: bigint
+  /** Median output price. */
+  medianOutputPrice: bigint
   /** Worst declared SLA across the offering set, in seconds. */
   slowestSlaSeconds: number
 }
@@ -24,32 +28,49 @@ export interface DiscoverDeps {
   now?: () => number
 }
 
-interface CacheEntry {
+/** A provider plus the model offerings it currently advertises. */
+export interface ProviderListing {
+  provider: ProviderRow
+  offerings: ModelOffering[]
+}
+
+interface CacheEntry<T> {
   expiresAt: number
-  data: ModelSummary[]
+  data: T
 }
 
 export class ModelDiscovery {
-  private cache: CacheEntry | null = null
+  private modelsCache: CacheEntry<ModelSummary[]> | null = null
+  private providersCache: CacheEntry<ProviderListing[]> | null = null
 
   constructor(private readonly deps: DiscoverDeps) {}
 
   async list(): Promise<ModelSummary[]> {
     const now = (this.deps.now ?? Date.now)()
-    if (this.cache && this.cache.expiresAt > now) return this.cache.data
-    const data = await this.scan()
-    this.cache = {data, expiresAt: now + this.deps.cacheTtlSeconds * 1000}
-    return data
+    if (this.modelsCache && this.modelsCache.expiresAt > now) return this.modelsCache.data
+    const {summaries} = await this.scan()
+    this.modelsCache = {data: summaries, expiresAt: now + this.deps.cacheTtlSeconds * 1000}
+    return summaries
+  }
+
+  async listProviders(): Promise<ProviderListing[]> {
+    const now = (this.deps.now ?? Date.now)()
+    if (this.providersCache && this.providersCache.expiresAt > now) return this.providersCache.data
+    const {providers} = await this.scan()
+    this.providersCache = {data: providers, expiresAt: now + this.deps.cacheTtlSeconds * 1000}
+    return providers
   }
 
   invalidate(): void {
-    this.cache = null
+    this.modelsCache = null
+    this.providersCache = null
   }
 
-  private async scan(): Promise<ModelSummary[]> {
+  private async scan(): Promise<{summaries: ModelSummary[]; providers: ProviderListing[]}> {
     const allow = this.deps.allowedModels
     const nowSec = Math.floor(((this.deps.now ?? Date.now)()) / 1000)
-    const byModel = new Map<string, {prices: bigint[]; slowest: number; count: number}>()
+    const byModel = new Map<string, {inputPrices: bigint[]; outputPrices: bigint[]; slowest: number; count: number}>()
+    const providers: ProviderListing[] = []
 
     let cursor = 0n
     for (let i = 0; i < 20; i++) {
@@ -57,10 +78,9 @@ export class ModelDiscovery {
       for (const p of page) {
         if (!isUsable(p, nowSec)) continue
         const offerings = await getOfferings(this.deps.chain, p.owner)
-        for (const o of offerings) {
-          if (allow && !allow.includes(o.modelId)) continue
-          mergeOffering(byModel, o)
-        }
+        const visible = allow ? offerings.filter(o => allow.includes(o.modelId)) : offerings
+        if (visible.length > 0) providers.push({provider: p, offerings: visible})
+        for (const o of visible) mergeOffering(byModel, o)
       }
       if (nextCursor === cursor || page.length === 0) break
       cursor = nextCursor
@@ -72,13 +92,16 @@ export class ModelDiscovery {
       summaries.push({
         id,
         providerCount: agg.count,
-        minPricePerKToken: agg.prices.reduce((a, b) => (a < b ? a : b)),
-        medianPricePerKToken: median(agg.prices),
+        minInputPrice: agg.inputPrices.reduce((a, b) => (a < b ? a : b)),
+        medianInputPrice: median(agg.inputPrices),
+        minOutputPrice: agg.outputPrices.reduce((a, b) => (a < b ? a : b)),
+        medianOutputPrice: median(agg.outputPrices),
         slowestSlaSeconds: agg.slowest,
       })
     }
     summaries.sort((a, b) => a.id.localeCompare(b.id))
-    return summaries
+    providers.sort((a, b) => a.provider.owner.localeCompare(b.provider.owner))
+    return {summaries, providers}
   }
 }
 
@@ -88,12 +111,13 @@ function isUsable(p: ProviderRow, nowSec: number): boolean {
 }
 
 function mergeOffering(
-  byModel: Map<string, {prices: bigint[]; slowest: number; count: number}>,
+  byModel: Map<string, {inputPrices: bigint[]; outputPrices: bigint[]; slowest: number; count: number}>,
   o: ModelOffering,
 ): void {
-  const slot = byModel.get(o.modelId) ?? {prices: [], slowest: 0, count: 0}
-  slot.prices.push(o.pricePerKToken)
-  slot.slowest = Math.max(slot.slowest, o.maxLatencySeconds)
+  const slot = byModel.get(o.modelId) ?? {inputPrices: [], outputPrices: [], slowest: 0, count: 0}
+  slot.inputPrices.push(o.inputPricePerMillionTokens)
+  slot.outputPrices.push(o.outputPricePerMillionTokens)
+  slot.slowest = Math.max(slot.slowest, Number(o.maxLatencySeconds))
   slot.count += 1
   byModel.set(o.modelId, slot)
 }

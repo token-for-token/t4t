@@ -4,6 +4,7 @@ import type {ChainClient} from '../../lib/chain'
 import {getProvider} from '../../lib/chain'
 import type {JobsDb, ProviderJobRow} from '../../lib/jobs-db'
 import type {Logger} from '../../lib/logger'
+import type {ModelOffering} from '../../lib/types'
 import type {JobQueue} from './listener'
 import {
   escape,
@@ -26,6 +27,10 @@ export interface ProviderAdminDeps {
   bee: Bee
   queue: JobQueue
   logger: Logger
+  /** Live in-memory offerings map. Edits here are immediately persisted on-chain. */
+  offerings: Map<string, ModelOffering>
+  /** Push the current offerings map to the registry via updateOfferings(). */
+  publishOfferings: () => Promise<void>
 }
 
 export function startAdminServer(deps: ProviderAdminDeps): void {
@@ -67,9 +72,93 @@ export function startAdminServer(deps: ProviderAdminDeps): void {
     res.send(statusPanels(status))
   })
 
+  app.get('/admin/models', (_req, res) => {
+    res.send(
+      layout({
+        title: 't4t provider',
+        refreshSeconds: 0,
+        active: 'models',
+        body: modelsPage([...deps.offerings.values()]),
+      }),
+    )
+  })
+
+  app.post('/admin/models/:modelId/price', express.urlencoded({extended: false}), async (req, res) => {
+    const modelId = req.params.modelId
+    const inRaw = String(req.body?.inputPricePerMillionTokens ?? '').trim()
+    const outRaw = String(req.body?.outputPricePerMillionTokens ?? '').trim()
+    const offering = deps.offerings.get(modelId)
+    if (!offering) {
+      res.status(404).send(`<p class="err">unknown model: ${escape(modelId)}</p>`)
+      return
+    }
+    let inParsed: bigint
+    let outParsed: bigint
+    try {
+      inParsed = BigInt(inRaw)
+      outParsed = BigInt(outRaw)
+      if (inParsed < 0n || outParsed < 0n) throw new Error('negative')
+    } catch {
+      res.status(400).send(`<p class="err">invalid price (in=${escape(inRaw)} out=${escape(outRaw)})</p>`)
+      return
+    }
+    deps.offerings.set(modelId, {
+      ...offering,
+      inputPricePerMillionTokens: inParsed,
+      outputPricePerMillionTokens: outParsed,
+    })
+    try {
+      await deps.publishOfferings()
+    } catch (err) {
+      deps.offerings.set(modelId, offering) // rollback
+      deps.logger.error({err, modelId}, 'updateOfferings tx failed')
+      res.status(500).send(`<p class="err">on-chain update failed: ${escape(String((err as Error)?.message ?? err))}</p>`)
+      return
+    }
+    res.send(modelRow(deps.offerings.get(modelId)!))
+  })
+
   app.listen(deps.port, deps.host, () =>
     deps.logger.info({host: deps.host, port: deps.port}, 'admin ui listening'),
   )
+}
+
+function modelsPage(offerings: ModelOffering[]): string {
+  if (offerings.length === 0) {
+    return `<section><h2>Models</h2><p class="muted">No models registered. Load a model in the backend and restart.</p></section>`
+  }
+  return `
+<section>
+  <h2>Models</h2>
+  <p class="muted">Prices are xBZZ wei per 1,000,000 tokens. Input = prompt tokens, output = completion tokens. Edits push <code>updateOfferings</code> on-chain.</p>
+  <table>
+    <thead><tr>
+      <th>Model</th>
+      <th>Input price (wei / 1M)</th>
+      <th>Input (xBZZ)</th>
+      <th>Output price (wei / 1M)</th>
+      <th>Output (xBZZ)</th>
+      <th></th>
+    </tr></thead>
+    <tbody>
+      ${offerings.map(modelRow).join('')}
+    </tbody>
+  </table>
+</section>`
+}
+
+function modelRow(o: ModelOffering): string {
+  const formId = `price-${o.modelId.replace(/[^a-zA-Z0-9-_]/g, '-')}`
+  return `<tr id="${escape(formId)}">
+    <form hx-post="/admin/models/${encodeURIComponent(o.modelId)}/price" hx-target="#${escape(formId)}" hx-swap="outerHTML">
+      <td class="mono">${escape(o.modelId)}</td>
+      <td><input name="inputPricePerMillionTokens" type="text" inputmode="numeric" value="${escape(o.inputPricePerMillionTokens.toString())}" required></td>
+      <td class="mono">${escape(formatXBZZ(o.inputPricePerMillionTokens))}</td>
+      <td><input name="outputPricePerMillionTokens" type="text" inputmode="numeric" value="${escape(o.outputPricePerMillionTokens.toString())}" required></td>
+      <td class="mono">${escape(formatXBZZ(o.outputPricePerMillionTokens))}</td>
+      <td><button type="submit">Save</button></td>
+    </form>
+  </tr>`
 }
 
 function jobsPage(

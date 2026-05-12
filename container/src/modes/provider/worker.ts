@@ -1,7 +1,7 @@
 import {keccak256, toBytes} from 'viem'
 import {jsonDecrypt, jsonEncrypt, type PayloadCipher} from '../../lib/crypto'
 import type {Logger} from '../../lib/logger'
-import {OllamaClient} from '../../lib/ollama'
+import {InferenceClient} from '../../lib/inference'
 import type {PssTransport} from '../../lib/swarm'
 import {downloadChunk, uploadChunk} from '../../lib/swarm'
 import type {Bee} from '@ethersphere/bee-js'
@@ -33,7 +33,7 @@ export interface WorkerDeps {
   bee: Bee
   postageBatchId: string
   pss: PssTransport
-  ollama: OllamaClient
+  inference: InferenceClient
   cipher: PayloadCipher
   selfAddress: Hex
   signMessage: (msg: string) => Promise<Hex>
@@ -42,7 +42,7 @@ export interface WorkerDeps {
     client: Hex,
   ) => Promise<{swarmOverlay: Hex; pssPublicKey: Hex} | null>
   /** Called once the response is uploaded so the listener can submit claimJob. */
-  onDelivered: (args: {jobIdRouting: Hex; responseHash: string; completionTokens: number}) => Promise<void>
+  onDelivered: (args: {jobIdRouting: Hex; responseHash: string; promptTokens: number; completionTokens: number}) => Promise<void>
   /** Optional persistence hook called at each lifecycle stage. */
   onProgress?: (p: WorkerProgress) => void
   logger: Logger
@@ -91,7 +91,7 @@ export async function processJob(deps: WorkerDeps, notify: Envelope<JobNotifyBod
   }
 
   // 3. Run inference.
-  const openaiResponse = await deps.ollama.chatCompletion(reqPayload.openaiRequest)
+  const openaiResponse = await deps.inference.chatCompletion(reqPayload.openaiRequest)
   log.info({completionTokens: openaiResponse.usage?.completion_tokens}, 'inference complete')
   deps.onProgress?.({
     stage: 'inferred',
@@ -147,6 +147,7 @@ export async function processJob(deps: WorkerDeps, notify: Envelope<JobNotifyBod
   await deps.onDelivered({
     jobIdRouting: routingFromHash,
     responseHash,
+    promptTokens: openaiResponse.usage?.prompt_tokens ?? 0,
     completionTokens: openaiResponse.usage?.completion_tokens ?? 0,
   })
 }
