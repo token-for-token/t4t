@@ -404,6 +404,7 @@ No off-chain rating in v1. Output-quality verification is deferred — we accept
 - **Key rotation**: providers can update `pssPublicKey` in the registry; clients always read the current key before encrypting.
 - **MITM on selection**: client reads provider's PSS pubkey from the on-chain registry, not from PSS, so a malicious peer can't substitute keys.
 - **Prompt privacy**: payloads encrypted end-to-end. Operator of the provider node can of course see decrypted prompts — same trust model as any local inference host. Document this clearly.
+- **Model-identity honesty**: the declared `modelId` is part of the SLA but is *not* cryptographically bound to the response in v1. A malicious provider can register `llama3:70b` pricing and serve `llama3:8b` (or a heavier-quantised variant), keeping the spread. Defenses in v1 are economic (liveness slashing) and reputational (client switching, see §8). Ollama's manifest digest (`/api/show.digest`) is available as a **soft signal** — useful at registration time to flag blob substitution against a known-good digest list — but it is not a proof: the provider operates the inference node and controls both what `/api/show` returns and which model `/api/chat` is actually routed to. We deliberately accept this trust band: the major commercial AI providers also swap underlying models without notifying clients, so requiring stronger guarantees here would be out of step with the industry. Hard proof of model identity (zkML, TEE attestations, statistical challenge protocols) is deferred — see §10.
 
 ---
 
