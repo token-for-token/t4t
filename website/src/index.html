@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Token4Token — decentralized AI inference on Gnosis + Swarm</title>
+  <meta name="description" content="Token4Token (T4T) is a decentralized AI inference marketplace. Clients pay providers in xBZZ to run inference on locally-hosted models, with payment escrowed on Gnosis Chain and traffic routed over Ethereum Swarm.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1>Token4Token</h1>
+      <p class="tagline">Decentralized AI inference marketplace on Gnosis Chain and Ethereum Swarm.</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <section>
+      <h2>How it works</h2>
+      <ol class="steps">
+        <li>
+          <h3>Providers run a container</h3>
+          <p>Anyone with a GPU and an OpenAI-compatible backend (Ollama, vLLM, llama.cpp&hellip;) runs the T4T provider container. It registers on-chain, stakes <span class="mono">xBZZ</span>, and publishes the models it serves with per-million-token prices.</p>
+        </li>
+        <li>
+          <h3>Clients post jobs</h3>
+          <p>Clients run the T4T client container, which exposes a normal OpenAI <span class="mono">/v1/chat/completions</span> endpoint locally. It picks a provider from the on-chain directory, escrows the maximum payment, and sends the encrypted request over Swarm PSS.</p>
+        </li>
+        <li>
+          <h3>Provider serves, gets paid on delivery</h3>
+          <p>The provider runs inference locally, ships the response back over Swarm, and claims payment from escrow. If the deadline lapses, the client gets a refund. Repeated failures slash the provider&rsquo;s stake.</p>
+        </li>
+        <li>
+          <h3>No middleman, no API key</h3>
+          <p>No central API gateway, no marketplace operator, no rate limit. Selection, payment, reputation, and liveness all live on-chain.</p>
+        </li>
+      </ol>
+      <p class="muted">Full protocol: <a href="https://github.com/ffaerber/t4t/blob/main/docs/spec.md">docs/spec.md</a>.</p>
+    </section>
+
+    <section>
+      <div class="row-between">
+        <h2>Live model directory</h2>
+        <button id="refresh" type="button">Refresh</button>
+      </div>
+      <p class="muted">Pulled live from <span class="mono">ProviderRegistry</span> on Gnosis Chain. Only providers with a fresh heartbeat (&le; 10&nbsp;min) and at least one offering are shown.</p>
+      <div id="status" class="status muted">Loading&hellip;</div>
+      <div id="models"></div>
+    </section>
+
+    <section>
+      <h2>Get started</h2>
+      <div class="grid2">
+        <div>
+          <h3>As a client</h3>
+          <p>Run the client container, point your existing OpenAI SDK at <span class="mono">http://localhost:8080/v1</span>, and pay per token in xBZZ.</p>
+          <p><a href="https://github.com/ffaerber/t4t/blob/main/docs/getting-started-client.md">Client guide &rarr;</a></p>
+        </div>
+        <div>
+          <h3>As a provider</h3>
+          <p>Run the provider container against your local Ollama / vLLM, stake xBZZ, and earn per-token revenue from clients worldwide.</p>
+          <p><a href="https://github.com/ffaerber/t4t/blob/main/docs/getting-started-provider.md">Provider guide &rarr;</a></p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container muted">
+      <p><a href="https://github.com/ffaerber/t4t">github.com/ffaerber/t4t</a> &middot; ENS <span class="mono">t4t.eth</span> &middot; hosted on Swarm</p>
+    </div>
+  </footer>
+
+  <script type="module" src="bundle.js"></script>
+</body>
+</html>

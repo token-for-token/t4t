@@ -26,6 +26,7 @@ t4t/
 │   ├── architecture.md
 │   ├── getting-started-client.md
 │   └── getting-started-provider.md
+├── website/             # t4t.eth landing page + live model directory
 ├── docker-compose.example.yml
 └── Makefile
 ```
