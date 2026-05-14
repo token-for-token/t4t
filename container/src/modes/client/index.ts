@@ -16,7 +16,6 @@ import {JobsDb} from '../../lib/jobs-db'
 import {loadOrCreatePssKey} from '../../lib/keys'
 import {selectProvider} from './selector'
 import {startAdminServer} from './admin'
-import {startClientServer} from './server'
 import type {
   Hex,
   JobAckBody,
@@ -30,7 +29,7 @@ import type {
 
 const PROTOCOL_VERSION = 1 as const
 
-export async function runClient(cfg: ClientConfig): Promise<void> {
+export async function startClient(cfg: ClientConfig): Promise<void> {
   const log = logger.child({mode: 'client'})
 
   // Onboarding-only mode covers two pre-flight states:
@@ -404,19 +403,14 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
     return summaries.map(m => ({id: m.id, object: 'model' as const, created, owned_by: 't4t'}))
   }
 
-  startClientServer({
-    logger: log,
-    port: cfg.T4T_HTTP_PORT,
-    fakeStreaming: cfg.T4T_FAKE_STREAMING,
-    handleChat,
-    listModels,
-  })
-
   startAdminServer({
     host: cfg.T4T_ADMIN_HOST,
     port: cfg.T4T_ADMIN_PORT,
     statusRefreshSeconds: cfg.T4T_STATUS_REFRESH_SECONDS,
     payloadsPersisted: cfg.T4T_PERSIST_PAYLOADS,
+    fakeStreaming: cfg.T4T_FAKE_STREAMING,
+    handleChat,
+    listModels,
     db,
     chain,
     bee,

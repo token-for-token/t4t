@@ -1,0 +1,95 @@
+# Example compose for running a T4T provider. Copy to docker-compose.yml and
+# edit. The provider exposes locally-hosted models (via Ollama, vLLM, …) on
+# the t4t marketplace on Gnosis Chain.
+#
+# First-boot flow:
+#   1. `mkdir -p data/provider && docker compose up -d`
+#   2. Open http://localhost:3000/wallet → Generate or import a wallet
+#   3. Fund the new address with xDAI (gas) and ≥ 100 xBZZ (stake)
+#   4. The page polls every 10s and auto-advances through onboarding phases
+#   5. Once live, pull models with `docker exec t4t-ollama-1 ollama pull <model>`
+
+services:
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Uncomment for NVIDIA GPU acceleration:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  t4t-provider:
+    image: t4t:dev
+    build: ./container
+    restart: unless-stopped
+    depends_on: [ollama]
+    environment:
+      T4T_MODE: provider
+      # Bee node API. Run your own (see commented `bee:` service below) or
+      # point at a hosted one. The provider uses Bee to (a) discover a usable
+      # postage batch and (b) send PSS messages with job results.
+      BEE_API_URL: http://bee:1633
+      # Inference backend — any OpenAI-compatible endpoint works (Ollama,
+      # vLLM, LiteLLM, llama.cpp server, OpenAI itself).
+      OPENAI_BASE_URL: http://ollama:11434
+      # OPENAI_API_KEY: ...   # uncomment for backends that require auth
+      #
+      # The protocol addresses default to the Gnosis-mainnet deployment baked
+      # into the image (see container/src/lib/config.ts). Uncomment to override
+      # — e.g. when running against a fork or a redeployed registry. YAML
+      # strips unquoted `0x…` literals; always quote hex values.
+      # GNOSIS_RPC_URL:   "https://rpc.gnosischain.com"
+      # REGISTRY_ADDRESS: "0xf81121AAbc2F7261224BaDd0Ed871711e6D1371E"
+      # ESCROW_ADDRESS:   "0x34Db8E014E71928f17E23eC1272B602582222c9c"
+      # XBZZ_ADDRESS:     "0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da"
+      #
+      # POSTAGE_BATCH_ID is auto-discovered from Bee on startup. Set this only
+      # to pin a specific batch across multiple stamps.
+      #
+      # WALLET_KEY is created/imported via the admin UI on first boot — do
+      # NOT set it here unless you're scripting an automated deployment.
+      #
+      # All knobs below have defaults baked into the image; uncomment to
+      # override. xBZZ has 16 decimals on Gnosis, so 1e16 wei = 1 BZZ.
+      # T4T_INPUT_PRICE_DEFAULT:  "3000000000000000"    # default — 0.3 BZZ / 1M input tokens
+      # T4T_OUTPUT_PRICE_DEFAULT: "15000000000000000"   # default — 1.5 BZZ / 1M output tokens
+      # T4T_HEARTBEAT_INTERVAL_SECONDS: "300"           # default — 5 min
+      # T4T_MAX_CONCURRENT_JOBS: "2"
+      # T4T_ADMIN_HOST: "0.0.0.0"                       # default — reachable from docker host
+      # T4T_ADMIN_PORT: "3000"
+    ports:
+      - "3000:3000"            # admin UI — wallet onboarding + jobs/status/models
+    volumes:
+      # Bind-mount so wallet.key / pss.key / jobs.db are operator-visible
+      # files (easy backup), not opaque docker volumes. The host folder
+      # must be owned by uid 1000 (matches the container's `node` user):
+      #   mkdir -p data/provider
+      - ./data/provider:/data
+
+  # Run your own Bee node alongside the provider. Skip this block if you
+  # already have a Bee node reachable from the docker network (point
+  # BEE_API_URL at it).
+  # bee:
+  #   image: ethersphere/bee:latest
+  #   restart: unless-stopped
+  #   environment:
+  #     BEE_API_ADDR: ":1633"
+  #     BEE_BLOCKCHAIN_RPC_ENDPOINT: "https://rpc.gnosischain.com"
+  #     BEE_FULL_NODE: "true"
+  #   ports:
+  #     - "1633:1633"
+  #   volumes:
+  #     - bee_data:/home/bee/.bee
+
+volumes:
+  ollama_data:
+  # bee_data:

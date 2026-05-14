@@ -451,7 +451,8 @@ t4t/
 │   ├── getting-started-client.md
 │   ├── getting-started-provider.md
 │   └── architecture.md
-├── docker-compose.example.yml
+├── docker-compose.provider-example.yml
+├── docker-compose.client-example.yml
 └── README.md
 ```
 

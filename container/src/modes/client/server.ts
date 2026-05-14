@@ -1,10 +1,9 @@
-import express, {type Request, type Response} from 'express'
+import express, {type Express, type Request, type Response} from 'express'
 import type {Logger} from '../../lib/logger'
 import type {OpenAIChatRequest, OpenAIChatResponse} from '../../lib/types'
 
-export interface ClientServerDeps {
+export interface ClientApiDeps {
   logger: Logger
-  port: number
   fakeStreaming: boolean
   /** Wire the actual T4T round-trip: post job, await delivery, return response. */
   handleChat: (req: OpenAIChatRequest) => Promise<OpenAIChatResponse>
@@ -12,11 +11,13 @@ export interface ClientServerDeps {
   listModels: () => Promise<Array<{id: string; object: 'model'; created: number; owned_by: string}>>
 }
 
-export function startClientServer(deps: ClientServerDeps): import('http').Server {
-  const app = express()
-  app.use(express.json({limit: '10mb'}))
-
-  app.get('/healthz', (_req, res) => res.json({ok: true}))
+/** Mount the OpenAI-compatible client API onto an existing Express app.
+ *  The admin server owns the listener; we just register `/v1/*` routes so
+ *  there's a single HTTP port for both operator UI and SDK consumers. */
+export function attachClientApi(app: Express, deps: ClientApiDeps): void {
+  // 10mb cap for chat-completion bodies — apply per-route so the admin
+  // server's smaller global json limit isn't accidentally widened.
+  const big = express.json({limit: '10mb'})
 
   app.get('/v1/models', async (_req, res) => {
     try {
@@ -27,7 +28,7 @@ export function startClientServer(deps: ClientServerDeps): import('http').Server
     }
   })
 
-  app.post('/v1/chat/completions', async (req: Request, res: Response) => {
+  app.post('/v1/chat/completions', big, async (req: Request, res: Response) => {
     const body = req.body as OpenAIChatRequest
     if (!body || !body.model || !Array.isArray(body.messages)) {
       return res.status(400).json({error: {message: 'invalid request'}})
@@ -46,8 +47,6 @@ export function startClientServer(deps: ClientServerDeps): import('http').Server
       res.status(502).json({error: {message: String(err)}})
     }
   })
-
-  return app.listen(deps.port, () => deps.logger.info({port: deps.port}, 'client http listening'))
 }
 
 /** SSE emulation per spec §7.2: hold the connection, then flush as chunks. */

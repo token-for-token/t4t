@@ -56,7 +56,7 @@ const Common = z.object({
   // 0.0.0.0 = reachable from the docker host via the published port. Override
   // to 127.0.0.1 when running natively (npm run dev) on a shared machine.
   T4T_ADMIN_HOST: z.string().default('0.0.0.0'),
-  T4T_ADMIN_PORT: z.coerce.number().int().positive().default(8090),
+  T4T_ADMIN_PORT: z.coerce.number().int().positive().default(3000),
   T4T_STATUS_REFRESH_SECONDS: z.coerce.number().int().positive().default(10),
 })
 
@@ -69,7 +69,6 @@ const CsvList = z.string().transform(s =>
 
 const Client = Common.extend({
   T4T_MODE: z.literal('client'),
-  T4T_HTTP_PORT: z.coerce.number().int().positive().default(8080),
   T4T_SELECTION_STRATEGY: z.enum(['cheapest', 'top_rep_cheapest', 'manual']).default('top_rep_cheapest'),
   // Optional cap on (input + output) wei per 1M tokens — providers above this are skipped.
   T4T_MAX_PRICE_PER_MILLION_TOKENS: z.coerce.bigint().optional(),

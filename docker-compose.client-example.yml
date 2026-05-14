@@ -1,0 +1,89 @@
+# Example compose for running a T4T client + OpenWebUI. Copy to
+# docker-compose.yml and edit. The client routes OpenAI-style chat requests
+# through the t4t marketplace, buying inference from providers on Gnosis.
+#
+# First-boot flow:
+#   1. `mkdir -p data/client && docker compose up -d`
+#   2. Open http://localhost:3000/wallet → Generate or import a wallet
+#   3. Fund the new address with xDAI (gas) and some xBZZ (per-job payment)
+#   4. The page polls every 10s and auto-advances through onboarding phases
+#   5. Once live, open http://localhost:8000 (OpenWebUI) and chat — every
+#      message is paid for in xBZZ, routed to a provider via PSS, response
+#      streamed back
+
+services:
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    restart: unless-stopped
+    depends_on: [t4t-client]
+    environment:
+      # All chat traffic goes through t4t-client's OpenAI-compatible endpoint.
+      # Admin UI and /v1/* live on the same port now (3000).
+      OPENAI_API_BASE_URL: http://t4t-client:3000/v1
+      OPENAI_API_KEY: t4t                  # any non-empty value; t4t-client doesn't check
+      ENABLE_OLLAMA_API: "false"           # don't autodetect a host Ollama
+      WEBUI_AUTH: "false"                  # skip login wall for local dev; enable for multi-user
+    ports:
+      - "8000:8080"            # OpenWebUI on http://localhost:8000 (client holds 3000)
+    volumes:
+      - open_webui_data:/app/backend/data
+
+  t4t-client:
+    image: t4t:dev
+    build: ./container
+    restart: unless-stopped
+    environment:
+      T4T_MODE: client
+      # Bee node API. Run your own (see commented `bee:` service below) or
+      # point at a hosted one. The client uses Bee to send PSS requests to
+      # providers and download response chunks.
+      BEE_API_URL: http://bee:1633
+      #
+      # The protocol addresses default to the Gnosis-mainnet deployment baked
+      # into the image (see container/src/lib/config.ts). Uncomment to
+      # override. YAML strips unquoted `0x…` literals; always quote hex.
+      # GNOSIS_RPC_URL:   "https://rpc.gnosischain.com"
+      # REGISTRY_ADDRESS: "0xf81121AAbc2F7261224BaDd0Ed871711e6D1371E"
+      # ESCROW_ADDRESS:   "0x34Db8E014E71928f17E23eC1272B602582222c9c"
+      # XBZZ_ADDRESS:     "0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da"
+      #
+      # POSTAGE_BATCH_ID is auto-discovered from Bee on startup.
+      # WALLET_KEY is created/imported via the admin UI on first boot.
+      #
+      # Selection + UX knobs (all have defaults; uncomment to override):
+      # T4T_SELECTION_STRATEGY: "top_rep_cheapest"      # default — see spec §8
+      # T4T_MAX_PRICE_PER_MILLION_TOKENS: "20000000000000000"  # 2 BZZ cap; unset = no cap
+      # T4T_DEFAULT_DEADLINE_SECONDS: "300"             # default — per-job delivery deadline
+      # T4T_FAKE_STREAMING: "true"                      # default — chunk response client-side
+      # T4T_ALLOWED_MODELS: "qwen2.5:0.5b,llama3.2:3b"  # comma-separated allow-list
+      # T4T_MIN_PROVIDERS_PER_MODEL: "1"                # default
+      # T4T_ADMIN_HOST: "0.0.0.0"
+      # T4T_ADMIN_PORT: "3000"
+    ports:
+      - "3000:3000"            # admin UI + OpenAI endpoint on http://localhost:3000 (and /v1/*)
+    volumes:
+      # Bind-mount so wallet.key / pss.key / jobs.db are operator-visible
+      # files (easy backup), not opaque docker volumes. The host folder
+      # must be owned by uid 1000 (matches the container's `node` user):
+      #   mkdir -p data/client
+      - ./data/client:/data
+
+  # Run your own Bee node alongside the client. Skip this block if you
+  # already have a Bee node reachable from the docker network (point
+  # BEE_API_URL at it).
+  # bee:
+  #   image: ethersphere/bee:latest
+  #   restart: unless-stopped
+  #   environment:
+  #     BEE_API_ADDR: ":1633"
+  #     BEE_BLOCKCHAIN_RPC_ENDPOINT: "https://rpc.gnosischain.com"
+  #     BEE_FULL_NODE: "true"
+  #   ports:
+  #     - "1633:1633"
+  #   volumes:
+  #     - bee_data:/home/bee/.bee
+
+volumes:
+  open_webui_data:
+  # bee_data:

@@ -4,7 +4,7 @@ You want to use T4T from any OpenAI-compatible app. Run the client container; po
 
 ## 1. Prerequisites
 
-- A local Bee node (`bee` or run with the bundled `docker-compose.example.yml`).
+- A local Bee node (`bee` or run with the bundled `docker-compose.client-example.yml`).
 - A wallet with **xBZZ** (for payment) and a little **xDAI** (for gas) on Gnosis Chain.
 - A funded Swarm postage batch ID.
 - The deployed T4T contract addresses (registry, escrow, xBZZ).

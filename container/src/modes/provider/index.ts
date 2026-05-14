@@ -36,7 +36,7 @@ import {JobQueue, isJobNotify} from './listener'
 // stake request that crashed the container on transferFrom.
 const PROVIDER_INITIAL_STAKE = 100n * 10n ** 16n // 100 xBZZ
 
-export async function runProvider(cfg: ProviderConfig): Promise<void> {
+export async function startProvider(cfg: ProviderConfig): Promise<void> {
   const log = logger.child({mode: 'provider'})
 
   // Onboarding-only mode covers two pre-flight states:

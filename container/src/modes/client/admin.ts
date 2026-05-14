@@ -4,6 +4,8 @@ import type {ChainClient} from '../../lib/chain'
 import type {ClientJobRow, JobsDb} from '../../lib/jobs-db'
 import type {Logger} from '../../lib/logger'
 import type {ModelDiscovery} from './models'
+import type {OpenAIChatRequest, OpenAIChatResponse} from '../../lib/types'
+import {attachClientApi} from './server'
 import {
   CLIENT_TABS,
   escape,
@@ -26,11 +28,26 @@ export interface ClientAdminDeps {
   postageBatchId: string
   discovery: ModelDiscovery
   pendingCount: () => number
+  /** Enable OpenAI-style "fake" SSE streaming on /v1/chat/completions. */
+  fakeStreaming: boolean
+  /** OpenAI handler: posts the t4t job and returns the completion. */
+  handleChat: (req: OpenAIChatRequest) => Promise<OpenAIChatResponse>
+  /** OpenAI handler: returns the discovered model union. */
+  listModels: () => Promise<Array<{id: string; object: 'model'; created: number; owned_by: string}>>
   logger: Logger
 }
 
 export function startAdminServer(deps: ClientAdminDeps): void {
   const app = express()
+
+  // Mount the OpenAI-compatible API (/v1/*) on the same Express instance so
+  // operator UI and SDK consumers share one port.
+  attachClientApi(app, {
+    logger: deps.logger,
+    fakeStreaming: deps.fakeStreaming,
+    handleChat: deps.handleChat,
+    listModels: deps.listModels,
+  })
 
   app.get('/healthz', (_req, res) => res.json({ok: true}))
 

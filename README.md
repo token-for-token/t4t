@@ -27,7 +27,8 @@ t4t/
 │   ├── getting-started-client.md
 │   └── getting-started-provider.md
 ├── website/             # t4t.eth landing page + live model directory
-├── docker-compose.example.yml
+├── docker-compose.provider-example.yml   # provider + ollama (+ optional bee)
+├── docker-compose.client-example.yml     # client + open-webui (+ optional bee)
 └── Makefile
 ```
 
@@ -58,7 +59,7 @@ from `make test` so the default loop stays hermetic.
 
 1. Run Anvil forked from Gnosis: `make anvil`
 2. Deploy contracts: `make deploy-local` (writes addresses to console)
-3. Copy `docker-compose.example.yml` → `docker-compose.yml`, fill addresses + keys
+3. Copy the relevant example (`docker-compose.provider-example.yml` or `docker-compose.client-example.yml`) → `docker-compose.yml`. Defaults work against the live Gnosis-mainnet deployment; the admin UI handles wallet onboarding on first boot.
 4. `docker compose up bee ollama`
 5. Pull a model: `docker exec -it $(docker compose ps -q ollama) ollama pull llama3:8b`
 6. `docker compose up t4t-provider t4t-client`
