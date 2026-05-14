@@ -31,13 +31,21 @@ const BoolFlag = z
   .union([z.literal('true'), z.literal('false')])
   .transform(s => s === 'true')
 
+// Built-in defaults for the live Gnosis-mainnet deployment. Override any of
+// these in docker-compose (`environment:`) if you redeploy contracts or want
+// to point at a different RPC.
+const DEFAULT_GNOSIS_RPC_URL = 'https://rpc.gnosischain.com'
+const DEFAULT_REGISTRY_ADDRESS = '0xf81121AAbc2F7261224BaDd0Ed871711e6D1371E'
+const DEFAULT_ESCROW_ADDRESS = '0x34Db8E014E71928f17E23eC1272B602582222c9c'
+const DEFAULT_XBZZ_ADDRESS = '0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da'
+
 const Common = z.object({
   T4T_MODE: z.enum(['client', 'provider']),
   BEE_API_URL: z.string().url(),
-  GNOSIS_RPC_URL: z.string().url(),
-  REGISTRY_ADDRESS: Address,
-  ESCROW_ADDRESS: Address,
-  XBZZ_ADDRESS: Address,
+  GNOSIS_RPC_URL: z.string().url().default(DEFAULT_GNOSIS_RPC_URL),
+  REGISTRY_ADDRESS: Address.default(DEFAULT_REGISTRY_ADDRESS as `0x${string}`),
+  ESCROW_ADDRESS: Address.default(DEFAULT_ESCROW_ADDRESS as `0x${string}`),
+  XBZZ_ADDRESS: Address.default(DEFAULT_XBZZ_ADDRESS as `0x${string}`),
   // Optional — if unset, the container queries the connected Bee node for a
   // usable postage batch on startup. Operators only set this to pin a specific
   // batch ID across multiple stamps.
@@ -45,7 +53,9 @@ const Common = z.object({
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   T4T_DATA_DIR: z.string().default('/data'),
   T4T_PSS_KEY_PATH: z.string().optional(),
-  T4T_ADMIN_HOST: z.string().default('127.0.0.1'),
+  // 0.0.0.0 = reachable from the docker host via the published port. Override
+  // to 127.0.0.1 when running natively (npm run dev) on a shared machine.
+  T4T_ADMIN_HOST: z.string().default('0.0.0.0'),
   T4T_ADMIN_PORT: z.coerce.number().int().positive().default(8090),
   T4T_STATUS_REFRESH_SECONDS: z.coerce.number().int().positive().default(10),
 })
@@ -80,10 +90,11 @@ const Provider = Common.extend({
   OPENAI_BASE_URL: z.string().url().default('http://host.docker.internal:11434'),
   OPENAI_API_KEY: z.string().optional(),
   // Default prices (xBZZ wei per 1M tokens, input vs output) applied to newly-discovered
-  // models. Per-model prices live on-chain in ModelOffering and can be edited from the
-  // admin UI; these defaults only kick in for first-seen models.
-  T4T_INPUT_PRICE_DEFAULT: z.coerce.bigint(),
-  T4T_OUTPUT_PRICE_DEFAULT: z.coerce.bigint(),
+  // models. xBZZ has 16 decimals on Gnosis, so 1e16 wei = 1 BZZ. Per-model prices
+  // live on-chain in ModelOffering and can be edited from the admin UI; these
+  // defaults only kick in for first-seen models.
+  T4T_INPUT_PRICE_DEFAULT: z.coerce.bigint().default(3_000_000_000_000_000n),  // 0.3 BZZ / 1M
+  T4T_OUTPUT_PRICE_DEFAULT: z.coerce.bigint().default(15_000_000_000_000_000n), // 1.5 BZZ / 1M
   T4T_HEARTBEAT_INTERVAL_SECONDS: z.coerce.number().int().positive().default(300),
   T4T_MAX_CONCURRENT_JOBS: z.coerce.number().int().positive().default(2),
   T4T_DEACTIVATE_ON_SHUTDOWN: BoolFlag.default('false'),
