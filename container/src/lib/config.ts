@@ -1,5 +1,6 @@
 import {z} from 'zod'
-import {readFileSync} from 'node:fs'
+import {existsSync, readFileSync} from 'node:fs'
+import {join} from 'node:path'
 
 const HexLike = z
   .string()
@@ -9,12 +10,21 @@ const HexLike = z
 const Address = HexLike.refine(s => s.length === 42, 'must be 20-byte address')
 const PrivateKey = HexLike.refine(s => s.length === 66, 'must be 32-byte hex private key')
 
-function readKey(): `0x${string}` {
+/** Resolve the on-disk wallet file path — `WALLET_KEY_FILE` env wins, else
+ *  `${T4T_DATA_DIR}/wallet.key`. The path is returned regardless of whether
+ *  the file exists; callers check existence. */
+export function walletKeyFilePath(dataDir: string): string {
+  return process.env.WALLET_KEY_FILE ?? join(dataDir, 'wallet.key')
+}
+
+/** Return the configured wallet private key, or null if none is available
+ *  yet. Order: WALLET_KEY env → WALLET_KEY_FILE env → ${T4T_DATA_DIR}/wallet.key. */
+function readKey(dataDir: string): `0x${string}` | null {
   const direct = process.env.WALLET_KEY
   if (direct) return PrivateKey.parse(direct)
-  const file = process.env.WALLET_KEY_FILE
-  if (file) return PrivateKey.parse(readFileSync(file, 'utf8').trim())
-  throw new Error('Set WALLET_KEY or WALLET_KEY_FILE')
+  const path = walletKeyFilePath(dataDir)
+  if (existsSync(path)) return PrivateKey.parse(readFileSync(path, 'utf8').trim())
+  return null
 }
 
 const BoolFlag = z
@@ -28,7 +38,10 @@ const Common = z.object({
   REGISTRY_ADDRESS: Address,
   ESCROW_ADDRESS: Address,
   XBZZ_ADDRESS: Address,
-  POSTAGE_BATCH_ID: z.string().regex(/^[0-9a-fA-F]{64}$/),
+  // Optional — if unset, the container queries the connected Bee node for a
+  // usable postage batch on startup. Operators only set this to pin a specific
+  // batch ID across multiple stamps.
+  POSTAGE_BATCH_ID: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   T4T_DATA_DIR: z.string().default('/data'),
   T4T_PSS_KEY_PATH: z.string().optional(),
@@ -45,6 +58,7 @@ const CsvList = z.string().transform(s =>
 )
 
 const Client = Common.extend({
+  T4T_MODE: z.literal('client'),
   T4T_HTTP_PORT: z.coerce.number().int().positive().default(8080),
   T4T_SELECTION_STRATEGY: z.enum(['cheapest', 'top_rep_cheapest', 'manual']).default('top_rep_cheapest'),
   // Optional cap on (input + output) wei per 1M tokens — providers above this are skipped.
@@ -60,6 +74,7 @@ const Client = Common.extend({
 })
 
 const Provider = Common.extend({
+  T4T_MODE: z.literal('provider'),
   // OpenAI-compatible inference backend (Ollama, vLLM, LiteLLM, llama.cpp, OpenAI itself).
   // Default points at host's Ollama (port 11434); for vLLM use the vLLM server URL (typically :8000).
   OPENAI_BASE_URL: z.string().url().default('http://host.docker.internal:11434'),
@@ -81,19 +96,27 @@ const Admin = Common.omit({T4T_MODE: true, POSTAGE_BATCH_ID: true}).extend({
   POSTAGE_BATCH_ID: Common.shape.POSTAGE_BATCH_ID.optional(),
 })
 
-export type ClientConfig = z.infer<typeof Client> & {walletKey: `0x${string}`}
-export type ProviderConfig = z.infer<typeof Provider> & {walletKey: `0x${string}`}
+export type ClientConfig = z.infer<typeof Client> & {walletKey: `0x${string}` | null}
+export type ProviderConfig = z.infer<typeof Provider> & {walletKey: `0x${string}` | null}
 export type AdminConfig = z.infer<typeof Admin> & {walletKey: `0x${string}`}
 export type Config = ClientConfig | ProviderConfig
 
 export function loadConfig(): Config {
   const mode = process.env.T4T_MODE
-  const walletKey = readKey()
-  if (mode === 'client') return {...Client.parse(process.env), walletKey}
-  if (mode === 'provider') return {...Provider.parse(process.env), walletKey}
+  if (mode === 'client') {
+    const parsed = Client.parse(process.env)
+    return {...parsed, walletKey: readKey(parsed.T4T_DATA_DIR)}
+  }
+  if (mode === 'provider') {
+    const parsed = Provider.parse(process.env)
+    return {...parsed, walletKey: readKey(parsed.T4T_DATA_DIR)}
+  }
   throw new Error(`T4T_MODE must be "client" or "provider" (got ${mode ?? 'unset'})`)
 }
 
 export function loadAdminConfig(): AdminConfig {
-  return {...Admin.parse(process.env), walletKey: readKey()}
+  const parsed = Admin.parse(process.env)
+  const walletKey = readKey(parsed.T4T_DATA_DIR)
+  if (!walletKey) throw new Error('No wallet configured. Run `t4t` (web UI) to create or import one, or set WALLET_KEY.')
+  return {...parsed, walletKey}
 }

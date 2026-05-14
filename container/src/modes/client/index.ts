@@ -2,6 +2,10 @@ import {Bee} from '@ethersphere/bee-js'
 import {keccak256, toBytes, toHex} from 'viem'
 import {join} from 'node:path'
 import type {ClientConfig} from '../../lib/config'
+import {walletKeyFilePath} from '../../lib/config'
+import {startOnboardingServer, isZeroAddress} from '../../lib/onboarding'
+import {discoverUsableBatchId} from '../../lib/swarm'
+import {privateKeyToAccount} from 'viem/accounts'
 import {ACK_WINDOW_SECONDS, cancelJob, ensureAllowance, makeChain, postJob, timeoutJob} from '../../lib/chain'
 import {ModelDiscovery} from './models'
 import {logger} from '../../lib/logger'
@@ -28,7 +32,46 @@ const PROTOCOL_VERSION = 1 as const
 
 export async function runClient(cfg: ClientConfig): Promise<void> {
   const log = logger.child({mode: 'client'})
+
+  // Onboarding-only mode covers two pre-flight states:
+  //   1) no wallet yet → show create/import UI
+  //   2) wallet exists but protocol addresses are still placeholder zeros →
+  //      show "configure addresses" UI (won't try chain calls and crash-loop).
+  const contractsMissing =
+    isZeroAddress(cfg.REGISTRY_ADDRESS) ||
+    isZeroAddress(cfg.ESCROW_ADDRESS) ||
+    isZeroAddress(cfg.XBZZ_ADDRESS)
+  const onboardingBase = {
+    role: 'client' as const,
+    host: cfg.T4T_ADMIN_HOST,
+    port: cfg.T4T_ADMIN_PORT,
+    walletFilePath: walletKeyFilePath(cfg.T4T_DATA_DIR),
+    existingAddress: cfg.walletKey ? privateKeyToAccount(cfg.walletKey).address : null,
+    protocol: {registry: cfg.REGISTRY_ADDRESS, escrow: cfg.ESCROW_ADDRESS, xbzz: cfg.XBZZ_ADDRESS},
+    logger: log,
+  }
+  if (!cfg.walletKey || contractsMissing) {
+    startOnboardingServer(onboardingBase)
+    return
+  }
+
   const bee = new Bee(cfg.BEE_API_URL)
+
+  // Resolve postage batch — env override wins, otherwise ask Bee for a usable
+  // batch it already owns. No usable batch = onboarding (phase 3).
+  const resolved = cfg.POSTAGE_BATCH_ID ?? (await discoverUsableBatchId(bee).catch(() => null))
+  if (!resolved) {
+    log.warn({beeUrl: cfg.BEE_API_URL}, 'no usable postage batch on Bee node — entering onboarding')
+    startOnboardingServer({
+      ...onboardingBase,
+      stamp: {missing: true, beeUrl: cfg.BEE_API_URL},
+      recheck: async () => (await discoverUsableBatchId(bee).catch(() => null)) !== null,
+    })
+    return
+  }
+  const postageBatchId: string = resolved
+  log.info({postageBatchId, source: cfg.POSTAGE_BATCH_ID ? 'env' : 'bee'}, 'postage batch resolved')
+
   const chain = makeChain({
     rpcUrl: cfg.GNOSIS_RPC_URL,
     privateKey: cfg.walletKey,
@@ -37,17 +80,21 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
     xbzz: cfg.XBZZ_ADDRESS,
   })
 
+  // Open the db here (before any chain write) so postJob/cancelJob/etc.
+  // flow into the `transactions` table.
+  const db = new JobsDb({path: join(cfg.T4T_DATA_DIR, 'jobs.db')})
+  chain.onTx = e => db.recordTx({hash: e.hash, kind: e.kind, fromAddress: chain.address, toAddress: e.toAddress, note: e.note ?? null})
+
   const pssKeyPath = cfg.T4T_PSS_KEY_PATH ?? join(cfg.T4T_DATA_DIR, 'pss.key')
   const pssKeys = loadOrCreatePssKey(pssKeyPath)
   log.info({pssKeyPath, pssPubKeyX: pssKeys.publicKeyX}, 'PSS keypair loaded')
   const cipher = new EciesCipher(pssKeys.privateKey)
   const pss = new PssTransport({
     bee,
-    postageBatchId: cfg.POSTAGE_BATCH_ID,
+    postageBatchId,
     logger: log,
     selfAddress: chain.address,
   })
-  const db = new JobsDb({path: join(cfg.T4T_DATA_DIR, 'jobs.db')})
   const jobMeta = new Map<string, {provider: string; modelId: string}>()
 
   if (cfg.T4T_PERSIST_PAYLOADS) {
@@ -200,7 +247,7 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
         const slot = pending.get(body.jobId)
         if (!slot) return
         try {
-          const bytes = await downloadChunk({bee, postageBatchId: cfg.POSTAGE_BATCH_ID, logger: log}, body.responseHash)
+          const bytes = await downloadChunk({bee, postageBatchId, logger: log}, body.responseHash)
           const payload = await jsonDecrypt<ResponsePayload>(cipher, bytes)
           const meta = jobMeta.get(body.jobId)
           if (meta) {
@@ -267,7 +314,7 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
     }
     const encrypted = await jsonEncrypt(cipher, target.provider.pssPublicKey, reqPayload)
     const requestHash = await uploadChunk(
-      {bee, postageBatchId: cfg.POSTAGE_BATCH_ID, logger: log},
+      {bee, postageBatchId, logger: log},
       encrypted,
     )
 
@@ -373,6 +420,7 @@ export async function runClient(cfg: ClientConfig): Promise<void> {
     db,
     chain,
     bee,
+    postageBatchId,
     discovery,
     pendingCount: () => pending.size,
     logger: log,

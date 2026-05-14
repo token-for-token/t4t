@@ -23,6 +23,20 @@ export async function downloadChunk(opts: SwarmClientOpts, reference: string): P
   return data.toUint8Array()
 }
 
+/** Pick the most usable postage batch the Bee node already owns. We prefer
+ *  batches that Bee marks as `usable: true` (i.e. enough block confirmations
+ *  and not expired), with the largest remaining capacity as a tiebreaker.
+ *  Returns null when the node has no usable batch — the caller should surface
+ *  this so the operator can buy or top-up one. */
+export async function discoverUsableBatchId(bee: Bee): Promise<string | null> {
+  const all = await bee.getAllPostageBatch().catch(() => [])
+  const usable = all.filter(b => b.usable)
+  if (usable.length === 0) return null
+  // Pick the longest-lived as a proxy for "still valid for the next while".
+  usable.sort((a, b) => b.duration.toSeconds() - a.duration.toSeconds())
+  return usable[0]!.batchID.toString()
+}
+
 export interface PssTransportOpts extends SwarmClientOpts {
   selfAddress: Hex
   dedupCapacity?: number
@@ -93,6 +107,9 @@ export class PssTransport {
       onError: err => {
         args.onError?.(err)
         this.opts.logger.error({err}, 'pss subscription error')
+      },
+      onClose: () => {
+        this.opts.logger.warn({topic: args.topic}, 'pss subscription closed')
       },
     })
   }

@@ -1,8 +1,7 @@
 // Edit these before deploying. Both are public values; safe to bundle.
 export const config = {
-  // Address of the deployed ProviderRegistry on Gnosis Chain.
-  // Set this after `forge script Deploy` and before running `npm run build`.
-  registryAddress: '0x0000000000000000000000000000000000000000',
+  // Deployed on Gnosis Chain (chain 100).
+  registryAddress: '0xf81121AAbc2F7261224BaDd0Ed871711e6D1371E',
 
   // Public Gnosis RPC. Must support CORS so the browser can call it.
   // rpc.gnosischain.com supports CORS; swap for a paid endpoint if you hit rate limits.

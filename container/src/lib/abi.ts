@@ -37,6 +37,13 @@ export const providerRegistryAbi = [
     outputs: [],
   },
   {type: 'function', name: 'heartbeat', stateMutability: 'nonpayable', inputs: [], outputs: []},
+  {
+    type: 'function',
+    name: 'MIN_STAKE',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{type: 'uint128'}],
+  },
   {type: 'function', name: 'deactivate', stateMutability: 'nonpayable', inputs: [], outputs: []},
   {type: 'function', name: 'withdrawStake', stateMutability: 'nonpayable', inputs: [], outputs: []},
   {

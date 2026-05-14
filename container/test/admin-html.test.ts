@@ -8,9 +8,9 @@ describe('admin-html helpers', () => {
     )
   })
 
-  it('formats xBZZ wei to human-friendly decimal', () => {
-    expect(formatXBZZ(1n * 10n ** 18n)).toBe('1')
-    expect(formatXBZZ(1_500_000_000_000_000_000n)).toBe('1.5')
+  it('formats xBZZ wei to human-friendly decimal (16 decimals on Gnosis)', () => {
+    expect(formatXBZZ(1n * 10n ** 16n)).toBe('1')
+    expect(formatXBZZ(15_000_000_000_000_000n)).toBe('1.5')
     expect(formatXBZZ(0n)).toBe('0')
     expect(formatXBZZ(null)).toBe('—')
   })

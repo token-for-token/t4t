@@ -8,3 +8,5 @@ dist/
 out/
 cache/
 broadcast/
+docker-compose.yml
+data/

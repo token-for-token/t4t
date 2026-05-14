@@ -5,6 +5,7 @@ import type {ClientJobRow, JobsDb} from '../../lib/jobs-db'
 import type {Logger} from '../../lib/logger'
 import type {ModelDiscovery} from './models'
 import {
+  CLIENT_TABS,
   escape,
   formatTs,
   formatXBZZ,
@@ -21,6 +22,8 @@ export interface ClientAdminDeps {
   db: JobsDb
   chain: ChainClient
   bee: Bee
+  /** Resolved postage batch ID used for every Swarm upload. */
+  postageBatchId: string
   discovery: ModelDiscovery
   pendingCount: () => number
   logger: Logger
@@ -31,60 +34,79 @@ export function startAdminServer(deps: ClientAdminDeps): void {
 
   app.get('/healthz', (_req, res) => res.json({ok: true}))
 
-  app.get('/admin', (_req, res) => {
+  // Polled by the toast widget in every page. Returns transactions submitted
+  // after `?since=<unix>` so the JS can render a notification for each new one.
+  app.get('/events/tx', (req, res) => {
+    const since = Number(req.query.since ?? 0)
+    const txs = deps.db.listTransactions({sinceSeconds: since, limit: 20})
+    res.json({txs, now: Math.floor(Date.now() / 1000)})
+  })
+
+  app.get('/', (_req, res) => {
     const rows = deps.db.listClientJobs({limit: 200})
     res.send(
       layout({
         title: 't4t client',
         refreshSeconds: 3,
-        active: 'jobs',
+        active: 'jobs', tabs: CLIENT_TABS,
         body: jobsPage(rows, deps.db.totalSpentXBZZ(), deps.pendingCount(), deps.payloadsPersisted),
       }),
     )
   })
 
-  app.get('/admin/jobs/rows', (_req, res) => {
+  app.get('/jobs/rows', (_req, res) => {
     const rows = deps.db.listClientJobs({limit: 200})
     res.send(jobsTableBody(rows, deps.payloadsPersisted))
   })
 
-  app.get('/admin/status', async (_req, res) => {
+  app.get('/status', async (_req, res) => {
     const status = await collectStatus(deps).catch(err => ({err: String(err)} as Record<string, unknown>))
     res.send(
       layout({
         title: 't4t client',
         refreshSeconds: deps.statusRefreshSeconds,
-        active: 'status',
+        active: 'status', tabs: CLIENT_TABS,
         body: statusPage(status, deps.statusRefreshSeconds),
       }),
     )
   })
 
-  app.get('/admin/status/panel', async (_req, res) => {
+  app.get('/status/panel', async (_req, res) => {
     const status = await collectStatus(deps).catch(err => ({err: String(err)} as Record<string, unknown>))
     res.send(statusPanels(status))
   })
 
-  app.get('/admin/models', async (_req, res) => {
+  app.get('/models', async (_req, res) => {
     const models = await deps.discovery.list().catch(() => [])
     res.send(
       layout({
         title: 't4t client',
         refreshSeconds: deps.statusRefreshSeconds,
-        active: 'models',
+        active: 'models', tabs: CLIENT_TABS,
         body: modelsPage(models),
       }),
     )
   })
 
-  app.get('/admin/providers', async (_req, res) => {
+  app.get('/providers', async (_req, res) => {
     const providers = await deps.discovery.listProviders().catch(() => [])
     res.send(
       layout({
         title: 't4t client',
         refreshSeconds: deps.statusRefreshSeconds,
-        active: 'providers',
+        active: 'providers', tabs: CLIENT_TABS,
         body: providersPage(providers),
+      }),
+    )
+  })
+
+  app.get('/wallet', async (_req, res) => {
+    res.send(
+      layout({
+        title: 't4t client',
+        refreshSeconds: deps.statusRefreshSeconds,
+        active: 'wallet', tabs: CLIENT_TABS,
+        body: await walletPage(deps),
       }),
     )
   })
@@ -115,7 +137,7 @@ function jobsPage(rows: ClientJobRow[], spent: bigint, pending: number, payloads
       <th>Posted</th><th>Max payment</th><th>Actual</th><th>Tokens (p/c)</th>
       <th>Prompt</th><th>Error</th>
     </tr></thead>
-    <tbody hx-get="/admin/jobs/rows" hx-trigger="every 3s" hx-swap="innerHTML">
+    <tbody hx-get="/jobs/rows" hx-trigger="every 3s" hx-swap="innerHTML">
       ${jobsTableBody(rows, payloads)}
     </tbody>
   </table>
@@ -146,7 +168,7 @@ function statusPage(status: Record<string, unknown>, refreshSec: number): string
   return `
 <section>
   <h2>Live status (refreshes every ${refreshSec}s)</h2>
-  <div hx-get="/admin/status/panel" hx-trigger="every ${refreshSec}s" hx-swap="innerHTML">
+  <div hx-get="/status/panel" hx-trigger="every ${refreshSec}s" hx-swap="innerHTML">
     ${statusPanels(status)}
   </div>
 </section>`
@@ -154,7 +176,7 @@ function statusPage(status: Record<string, unknown>, refreshSec: number): string
 
 function statusPanels(s: Record<string, unknown>): string {
   if (s.err) return `<p class="err">${escape(s.err)}</p>`
-  const bee = s.bee as {url: string; ok: boolean; overlay?: string} | undefined
+  const bee = s.bee as {url: string; ok: boolean; overlay?: string; postageBatchId?: string} | undefined
   const chain = s.chain as {chainId?: number; block?: bigint; gasBalance?: bigint; xbzzBalance?: bigint} | undefined
   const role = s.role as {pending?: number; lastSuccess?: number} | undefined
   return `
@@ -165,6 +187,11 @@ function statusPanels(s: Record<string, unknown>): string {
       <dt>API URL</dt><dd>${escape(bee?.url ?? '')}</dd>
       <dt>Reachable</dt><dd class="${bee?.ok ? 'ok' : 'err'}">${bee?.ok ? 'yes' : 'no'}</dd>
       <dt>Overlay</dt><dd>${escape(bee?.overlay ?? '—')}</dd>
+      <dt>Postage batch</dt><dd class="mono">${
+        bee?.postageBatchId
+          ? `<a href="https://batch-explorer.github.io/batch/${escape(bee.postageBatchId)}" target="_blank" rel="noopener">${escape(bee.postageBatchId)}</a>`
+          : '—'
+      }</dd>
     </dl>
   </section>
   <section>
@@ -292,8 +319,64 @@ async function collectStatus(deps: ClientAdminDeps): Promise<Record<string, unkn
     .listClientJobs({limit: 1})
     .find(r => r.status === 'delivered' || r.status === 'claimed')?.deliveredAt
   return {
-    bee: {url: beeUrl, ok: beeOk, overlay},
+    bee: {url: beeUrl, ok: beeOk, overlay, postageBatchId: deps.postageBatchId},
     chain: {chainId: deps.chain.pub.chain?.id, block, gasBalance, xbzzBalance},
     role: {pending: deps.pendingCount(), lastSuccess},
   }
+}
+
+async function walletPage(deps: ClientAdminDeps): Promise<string> {
+  const address = deps.chain.address
+  const [gas, xbzz] = await Promise.all([
+    deps.chain.pub.getBalance({address}).catch(() => undefined),
+    deps.chain.pub
+      .readContract({
+        address: deps.chain.xbzz,
+        abi: [
+          {
+            type: 'function',
+            name: 'balanceOf',
+            stateMutability: 'view',
+            inputs: [{name: 'o', type: 'address'}],
+            outputs: [{type: 'uint256'}],
+          },
+        ],
+        functionName: 'balanceOf',
+        args: [address],
+      })
+      .catch(() => undefined),
+  ])
+  const txs = deps.db.listTransactions({limit: 100})
+  return `
+<section>
+  <h2>Wallet</h2>
+  <dl class="kv">
+    <dt>Address</dt><dd class="mono">${escape(address)}</dd>
+    <dt>xDAI (gas)</dt><dd>${escape(formatXBZZ(gas as bigint | undefined ?? null))}</dd>
+    <dt>xBZZ</dt><dd>${escape(formatXBZZ(xbzz as bigint | undefined ?? null))}</dd>
+  </dl>
+  <p class="muted">Private key is stored at <span class="mono">/data/wallet.key</span> (bind-mounted from the host). To replace it, delete that file and restart — the onboarding UI will reappear.</p>
+</section>
+${transactionsSection(txs)}`
+}
+
+function transactionsSection(txs: import('../../lib/jobs-db').TxRow[]): string {
+  if (txs.length === 0) {
+    return `<section><h2>Transactions</h2><p class="muted">No on-chain transactions recorded yet.</p></section>`
+  }
+  const rows = txs.map(t => `<tr>
+    <td>${escape(formatTs(t.submittedAt))}</td>
+    <td>${escape(t.kind)}</td>
+    <td class="mono"><a href="https://gnosisscan.io/tx/${escape(t.hash)}" target="_blank" rel="noopener">${escape(shortHex(t.hash))}</a></td>
+    <td class="mono">${escape(shortHex(t.toAddress))}</td>
+    <td class="muted">${escape(t.note ?? '')}</td>
+  </tr>`).join('')
+  return `
+<section>
+  <h2>Transactions <span class="muted" style="font-weight:normal">(last ${txs.length})</span></h2>
+  <table>
+    <thead><tr><th>Time (UTC)</th><th>Kind</th><th>Tx</th><th>To</th><th>Note</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+</section>`
 }

@@ -101,6 +101,27 @@ CREATE INDEX IF NOT EXISTS client_jobs_posted ON client_jobs(postedAt);
 CREATE INDEX IF NOT EXISTS client_jobs_status ON client_jobs(status);
 `
 
+const TX_SCHEMA = `
+CREATE TABLE IF NOT EXISTS transactions (
+  hash         TEXT PRIMARY KEY,
+  kind         TEXT NOT NULL,
+  submittedAt  INTEGER NOT NULL,
+  fromAddress  TEXT NOT NULL,
+  toAddress    TEXT NOT NULL,
+  note         TEXT
+);
+CREATE INDEX IF NOT EXISTS transactions_submitted ON transactions(submittedAt);
+`
+
+export interface TxRow {
+  hash: string
+  kind: string
+  submittedAt: number
+  fromAddress: string
+  toAddress: string
+  note: string | null
+}
+
 export interface JobsDbOpts {
   /** ":memory:" for tests, absolute path otherwise. */
   path: string
@@ -116,6 +137,36 @@ export class JobsDb {
     this.db.pragma('journal_mode = WAL')
     this.db.exec(PROVIDER_SCHEMA)
     this.db.exec(CLIENT_SCHEMA)
+    this.db.exec(TX_SCHEMA)
+  }
+
+  // ---------- transactions (shared) ----------
+
+  /** Append a tx row. Duplicate hashes are silently ignored (e.g. on idempotent
+   *  retries). The chain client calls this after each successful submission. */
+  recordTx(row: Omit<TxRow, 'submittedAt'> & {submittedAt?: number}): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO transactions(hash, kind, submittedAt, fromAddress, toAddress, note)
+         VALUES (@hash, @kind, @submittedAt, @fromAddress, @toAddress, @note)`,
+      )
+      .run({
+        ...row,
+        submittedAt: row.submittedAt ?? Math.floor(Date.now() / 1000),
+        note: row.note ?? null,
+      })
+  }
+
+  listTransactions(opts: {limit?: number; sinceSeconds?: number} = {}): TxRow[] {
+    const limit = opts.limit ?? 100
+    if (opts.sinceSeconds !== undefined) {
+      return this.db
+        .prepare(`SELECT * FROM transactions WHERE submittedAt > ? ORDER BY submittedAt DESC LIMIT ?`)
+        .all(opts.sinceSeconds, limit) as TxRow[]
+    }
+    return this.db
+      .prepare(`SELECT * FROM transactions ORDER BY submittedAt DESC LIMIT ?`)
+      .all(limit) as TxRow[]
   }
 
   close(): void {

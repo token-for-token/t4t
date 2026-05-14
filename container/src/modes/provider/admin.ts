@@ -12,6 +12,7 @@ import {
   formatTs,
   formatXBZZ,
   layout,
+  PROVIDER_TABS,
   shortHex,
   statusPill,
 } from '../../lib/admin-html'
@@ -25,6 +26,9 @@ export interface ProviderAdminDeps {
   db: JobsDb
   chain: ChainClient
   bee: Bee
+  /** Resolved postage batch ID used for every Swarm upload. Shown on the
+   *  status page so the operator can confirm which stamp is active. */
+  postageBatchId: string
   queue: JobQueue
   logger: Logger
   /** Live in-memory offerings map. Edits here are immediately persisted on-chain. */
@@ -38,52 +42,71 @@ export function startAdminServer(deps: ProviderAdminDeps): void {
 
   app.get('/healthz', (_req, res) => res.json({ok: true}))
 
-  app.get('/admin', (_req, res) => {
+  // Polled by the toast widget in every page. Returns transactions submitted
+  // after `?since=<unix>` so the JS can render a notification for each new one.
+  app.get('/events/tx', (req, res) => {
+    const since = Number(req.query.since ?? 0)
+    const txs = deps.db.listTransactions({sinceSeconds: since, limit: 20})
+    res.json({txs, now: Math.floor(Date.now() / 1000)})
+  })
+
+  app.get('/', (_req, res) => {
     const rows = deps.db.listProviderJobs({limit: 200})
     res.send(
       layout({
         title: 't4t provider',
         refreshSeconds: 3,
-        active: 'jobs',
+        active: 'jobs', tabs: PROVIDER_TABS,
         body: jobsPage(rows, deps.db.countProviderByStatus(), deps.db.totalEarnedXBZZ(), deps.statusRefreshSeconds),
       }),
     )
   })
 
-  app.get('/admin/jobs/rows', (_req, res) => {
+  app.get('/jobs/rows', (_req, res) => {
     const rows = deps.db.listProviderJobs({limit: 200})
     res.send(jobsTableBody(rows))
   })
 
-  app.get('/admin/status', async (_req, res) => {
+  app.get('/status', async (_req, res) => {
     const status = await collectStatus(deps).catch(err => ({err: String(err)} as Record<string, unknown>))
     res.send(
       layout({
         title: 't4t provider',
         refreshSeconds: deps.statusRefreshSeconds,
-        active: 'status',
+        active: 'status', tabs: PROVIDER_TABS,
         body: statusPage(status, deps.statusRefreshSeconds),
       }),
     )
   })
 
-  app.get('/admin/status/panel', async (_req, res) => {
+  app.get('/status/panel', async (_req, res) => {
     const status = await collectStatus(deps).catch(err => ({err: String(err)} as Record<string, unknown>))
     res.send(statusPanels(status))
   })
 
-  app.get('/admin/models', (_req, res) => {
+  app.get('/models', (_req, res) => {
     res.send(
       layout({
         title: 't4t provider',
         refreshSeconds: 0,
-        active: 'models',
+        active: 'models', tabs: PROVIDER_TABS,
         body: modelsPage([...deps.offerings.values()]),
       }),
     )
   })
 
-  app.post('/admin/models/:modelId/price', express.urlencoded({extended: false}), async (req, res) => {
+  app.get('/wallet', async (_req, res) => {
+    res.send(
+      layout({
+        title: 't4t provider',
+        refreshSeconds: deps.statusRefreshSeconds,
+        active: 'wallet', tabs: PROVIDER_TABS,
+        body: await walletPage(deps),
+      }),
+    )
+  })
+
+  app.post('/models/:modelId/price', express.urlencoded({extended: false}), async (req, res) => {
     const modelId = req.params.modelId
     const inRaw = String(req.body?.inputPricePerMillionTokens ?? '').trim()
     const outRaw = String(req.body?.outputPricePerMillionTokens ?? '').trim()
@@ -150,7 +173,7 @@ function modelsPage(offerings: ModelOffering[]): string {
 function modelRow(o: ModelOffering): string {
   const formId = `price-${o.modelId.replace(/[^a-zA-Z0-9-_]/g, '-')}`
   return `<tr id="${escape(formId)}">
-    <form hx-post="/admin/models/${encodeURIComponent(o.modelId)}/price" hx-target="#${escape(formId)}" hx-swap="outerHTML">
+    <form hx-post="/models/${encodeURIComponent(o.modelId)}/price" hx-target="#${escape(formId)}" hx-swap="outerHTML">
       <td class="mono">${escape(o.modelId)}</td>
       <td><input name="inputPricePerMillionTokens" type="text" inputmode="numeric" value="${escape(o.inputPricePerMillionTokens.toString())}" required></td>
       <td class="mono">${escape(formatXBZZ(o.inputPricePerMillionTokens))}</td>
@@ -183,7 +206,7 @@ function jobsPage(
       <th>Job</th><th>Client</th><th>Model</th><th>Status</th>
       <th>Received</th><th>Duration</th><th>Tokens (p/c)</th><th>Earned</th><th>Error</th>
     </tr></thead>
-    <tbody hx-get="/admin/jobs/rows" hx-trigger="every ${refreshSec}s" hx-swap="innerHTML">
+    <tbody hx-get="/jobs/rows" hx-trigger="every ${refreshSec}s" hx-swap="innerHTML">
       ${jobsTableBody(rows)}
     </tbody>
   </table>
@@ -213,7 +236,7 @@ function statusPage(status: Record<string, unknown>, refreshSec: number): string
   return `
 <section>
   <h2>Live status (refreshes every ${refreshSec}s)</h2>
-  <div hx-get="/admin/status/panel" hx-trigger="every ${refreshSec}s" hx-swap="innerHTML">
+  <div hx-get="/status/panel" hx-trigger="every ${refreshSec}s" hx-swap="innerHTML">
     ${statusPanels(status)}
   </div>
 </section>`
@@ -221,11 +244,12 @@ function statusPage(status: Record<string, unknown>, refreshSec: number): string
 
 function statusPanels(s: Record<string, unknown>): string {
   if (s.err) return `<p class="err">${escape(s.err)}</p>`
-  const bee = s.bee as {url: string; ok: boolean; overlay?: string} | undefined
+  const bee = s.bee as {url: string; ok: boolean; overlay?: string; postageBatchId?: string} | undefined
   const chain = s.chain as {url: string; chainId?: number; block?: bigint; gasBalance?: bigint; xbzzBalance?: bigint} | undefined
   const role = s.role as
-    | {stake?: bigint; openJobs?: number; lastHeartbeat?: number; heartbeatStale?: boolean; active?: boolean}
+    | {stake?: bigint; openJobs?: number; lastHeartbeat?: number; heartbeatStale?: boolean; active?: boolean; address?: string}
     | undefined
+  const offerings = (s.offerings ?? []) as ModelOffering[]
   return `
 <div class="grid2">
   <section>
@@ -234,6 +258,11 @@ function statusPanels(s: Record<string, unknown>): string {
       <dt>API URL</dt><dd>${escape(bee?.url ?? '')}</dd>
       <dt>Reachable</dt><dd class="${bee?.ok ? 'ok' : 'err'}">${bee?.ok ? 'yes' : 'no'}</dd>
       <dt>Overlay</dt><dd>${escape(bee?.overlay ?? '—')}</dd>
+      <dt>Postage batch</dt><dd class="mono">${
+        bee?.postageBatchId
+          ? `<a href="https://batch-explorer.github.io/batch/${escape(bee.postageBatchId)}" target="_blank" rel="noopener">${escape(bee.postageBatchId)}</a>`
+          : '—'
+      }</dd>
     </dl>
   </section>
   <section>
@@ -256,7 +285,51 @@ function statusPanels(s: Record<string, unknown>): string {
       <dd class="${role?.heartbeatStale ? 'warn' : 'ok'}">${escape(formatTs(role?.lastHeartbeat ?? null))}${role?.heartbeatStale ? ' (stale)' : ''}</dd>
     </dl>
   </section>
-</div>`
+</div>
+${clientViewSection(offerings, role?.address)}`
+}
+
+/** Read-only mirror of what the t4t client sees when it discovers this provider
+ *  through `ProviderRegistry.listProviders` + `getOfferings`. Useful sanity
+ *  check that pricing edits actually made it on-chain. */
+function clientViewSection(offerings: ModelOffering[], address?: string): string {
+  const intro = `<p class="muted">This is exactly what a client discovers when calling
+    <span class="mono">getOfferings(${escape(address ?? 'this-provider')})</span> on
+    <span class="mono">ProviderRegistry</span>. Prices are xBZZ wei per 1,000,000 tokens.
+    Edit them on the <a href="/models">Models</a> page.</p>`
+  if (offerings.length === 0) {
+    return `<section>
+      <h2>What clients see</h2>
+      ${intro}
+      <p class="warn">No offerings published. Load a model in the backend so the next heartbeat picks it up.</p>
+    </section>`
+  }
+  const rows = offerings
+    .map(o => `<tr>
+      <td class="mono">${escape(o.modelId)}</td>
+      <td><span class="mono">${escape(o.inputPricePerMillionTokens.toString())}</span><br>
+          <span class="muted">${escape(formatXBZZ(o.inputPricePerMillionTokens))} xBZZ</span></td>
+      <td><span class="mono">${escape(o.outputPricePerMillionTokens.toString())}</span><br>
+          <span class="muted">${escape(formatXBZZ(o.outputPricePerMillionTokens))} xBZZ</span></td>
+      <td>${escape(Number(o.maxLatencySeconds))}s</td>
+      <td>${o.maxContextTokens === 0n ? '<span class="muted">—</span>' : escape(o.maxContextTokens.toString())}</td>
+    </tr>`)
+    .join('')
+  return `
+<section>
+  <h2>What clients see</h2>
+  ${intro}
+  <table>
+    <thead><tr>
+      <th>Model</th>
+      <th>Input / 1M tokens</th>
+      <th>Output / 1M tokens</th>
+      <th>SLA</th>
+      <th>Max ctx</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+</section>`
 }
 
 async function collectStatus(deps: ProviderAdminDeps): Promise<Record<string, unknown>> {
@@ -292,7 +365,7 @@ async function collectStatus(deps: ProviderAdminDeps): Promise<Record<string, un
   ])
   const now = Math.floor(Date.now() / 1000)
   return {
-    bee: {url: beeUrl, ok: beeOk, overlay},
+    bee: {url: beeUrl, ok: beeOk, overlay, postageBatchId: deps.postageBatchId},
     chain: {
       url: '',
       chainId: deps.chain.pub.chain?.id,
@@ -302,6 +375,7 @@ async function collectStatus(deps: ProviderAdminDeps): Promise<Record<string, un
     },
     role: provider && provider.owner !== '0x0000000000000000000000000000000000000000'
       ? {
+          address: deps.chain.address,
           active: provider.active,
           stake: provider.stake,
           openJobs: Number(deps.queue.inFlight),
@@ -309,5 +383,62 @@ async function collectStatus(deps: ProviderAdminDeps): Promise<Record<string, un
           heartbeatStale: Number(provider.lastHeartbeat) + HEARTBEAT_TTL < now,
         }
       : undefined,
+    offerings: [...deps.offerings.values()],
   }
+}
+
+async function walletPage(deps: ProviderAdminDeps): Promise<string> {
+  const address = deps.chain.address
+  const [gas, xbzz] = await Promise.all([
+    deps.chain.pub.getBalance({address}).catch(() => undefined),
+    deps.chain.pub
+      .readContract({
+        address: deps.chain.xbzz,
+        abi: [
+          {
+            type: 'function',
+            name: 'balanceOf',
+            stateMutability: 'view',
+            inputs: [{name: 'o', type: 'address'}],
+            outputs: [{type: 'uint256'}],
+          },
+        ],
+        functionName: 'balanceOf',
+        args: [address],
+      })
+      .catch(() => undefined),
+  ])
+  const txs = deps.db.listTransactions({limit: 100})
+  return `
+<section>
+  <h2>Wallet</h2>
+  <dl class="kv">
+    <dt>Address</dt><dd class="mono">${escape(address)}</dd>
+    <dt>xDAI (gas)</dt><dd>${escape(formatXBZZ(gas as bigint | undefined ?? null))}</dd>
+    <dt>xBZZ</dt><dd>${escape(formatXBZZ(xbzz as bigint | undefined ?? null))}</dd>
+  </dl>
+  <p class="muted">Private key is stored at <span class="mono">/data/wallet.key</span> (bind-mounted from the host). To replace it, delete that file and restart — the onboarding UI will reappear.</p>
+</section>
+${transactionsSection(txs)}`
+}
+
+function transactionsSection(txs: import('../../lib/jobs-db').TxRow[]): string {
+  if (txs.length === 0) {
+    return `<section><h2>Transactions</h2><p class="muted">No on-chain transactions recorded yet.</p></section>`
+  }
+  const rows = txs.map(t => `<tr>
+    <td>${escape(formatTs(t.submittedAt))}</td>
+    <td>${escape(t.kind)}</td>
+    <td class="mono"><a href="https://gnosisscan.io/tx/${escape(t.hash)}" target="_blank" rel="noopener">${escape(shortHex(t.hash))}</a></td>
+    <td class="mono">${escape(shortHex(t.toAddress))}</td>
+    <td class="muted">${escape(t.note ?? '')}</td>
+  </tr>`).join('')
+  return `
+<section>
+  <h2>Transactions <span class="muted" style="font-weight:normal">(last ${txs.length})</span></h2>
+  <table>
+    <thead><tr><th>Time (UTC)</th><th>Kind</th><th>Tx</th><th>To</th><th>Note</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+</section>`
 }

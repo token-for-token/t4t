@@ -12,16 +12,45 @@ export function escape(s: unknown): string {
     .replace(/'/g, '&#39;')
 }
 
+export type TabId = 'jobs' | 'status' | 'models' | 'providers' | 'wallet'
+export interface NavTab {
+  id: TabId
+  href: string
+  label: string
+}
+
+/** Default tab set for the provider admin (no "Providers" — provider doesn't
+ *  serve a market-listing page). */
+export const PROVIDER_TABS: NavTab[] = [
+  {id: 'jobs', href: '/', label: 'Jobs'},
+  {id: 'models', href: '/models', label: 'Models'},
+  {id: 'wallet', href: '/wallet', label: 'Wallet'},
+  {id: 'status', href: '/status', label: 'Status'},
+]
+
+/** Default tab set for the client admin (includes "Providers" market view). */
+export const CLIENT_TABS: NavTab[] = [
+  {id: 'jobs', href: '/', label: 'Jobs'},
+  {id: 'models', href: '/models', label: 'Models'},
+  {id: 'providers', href: '/providers', label: 'Providers'},
+  {id: 'wallet', href: '/wallet', label: 'Wallet'},
+  {id: 'status', href: '/status', label: 'Status'},
+]
+
 export interface LayoutOpts {
   title: string
   refreshSeconds: number
   body: string
-  active: 'jobs' | 'status' | 'models' | 'providers'
+  active: TabId
+  /** Tabs to render in the nav. Falls back to CLIENT_TABS for backwards
+   *  compatibility with callers that haven't been updated yet. */
+  tabs?: NavTab[]
 }
 
 export function layout(opts: LayoutOpts): string {
-  const tab = (id: LayoutOpts['active'], href: string, label: string) =>
-    `<a href="${href}" class="${opts.active === id ? 'active' : ''}">${label}</a>`
+  const tabs = opts.tabs ?? CLIENT_TABS
+  const tab = (t: NavTab) =>
+    `<a href="${t.href}" class="${opts.active === t.id ? 'active' : ''}">${escape(t.label)}</a>`
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -60,21 +89,63 @@ export function layout(opts: LayoutOpts): string {
     .muted{color:#888}
     .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
     @media(max-width:800px){.grid2{grid-template-columns:1fr}}
+    textarea,input[type=text]{width:100%;font:13px ui-monospace,SFMono-Regular,Menlo,monospace;padding:8px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box}
+    button{font:inherit;padding:6px 14px;border:1px solid #444;background:#222;color:#fff;border-radius:4px;cursor:pointer;margin-top:8px}
+    button:hover{background:#000}
+    .mnemonic{padding:14px;background:#fafaf0;border:1px solid #d9c27e;border-radius:4px;font-size:14px;line-height:1.8;margin:8px 0 12px;word-spacing:8px}
+    label.inline{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:13px;color:#555}
+    .toast-stack{position:fixed;top:16px;right:16px;display:flex;flex-direction:column;gap:8px;z-index:1000;pointer-events:none}
+    .toast{background:#222;color:#fff;padding:10px 14px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.25);min-width:280px;font-size:13px;pointer-events:auto;animation:toastIn .2s ease-out}
+    .toast a{color:#9ec6ff;text-decoration:underline}
+    .toast .kind{font-weight:600;display:block;margin-bottom:2px}
+    .toast .hash,.toast .note{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#bbb}
+    @keyframes toastIn{from{transform:translateX(24px);opacity:0}to{transform:translateX(0);opacity:1}}
   </style>
 </head>
 <body>
   <header>
     <h1>${escape(opts.title)}</h1>
     <nav>
-      ${tab('jobs', '/admin', 'Jobs')}
-      ${tab('status', '/admin/status', 'Status')}
-      ${tab('models', '/admin/models', 'Models')}
-      ${tab('providers', '/admin/providers', 'Providers')}
+      ${tabs.map(tab).join('\n      ')}
     </nav>
   </header>
   <main hx-target="this" hx-swap="innerHTML">
     ${opts.body}
   </main>
+  <div class="toast-stack" id="toast-stack"></div>
+  <script>
+  (() => {
+    if (window.__t4tToastInit) return; window.__t4tToastInit = true;
+    const stack = document.getElementById('toast-stack');
+    // Start "now" so we don't replay the entire on-chain history on page load.
+    let since = Math.floor(Date.now() / 1000);
+    function shorthex(h){ return h && h.length > 12 ? h.slice(0,8) + '…' + h.slice(-4) : (h||''); }
+    function show(t){
+      const div = document.createElement('div');
+      div.className = 'toast';
+      div.innerHTML =
+        '<span class="kind">⛓ ' + t.kind + '</span>' +
+        '<a class="hash" href="https://gnosisscan.io/tx/' + t.hash + '" target="_blank" rel="noopener">' + shorthex(t.hash) + '</a>' +
+        (t.note ? '<div class="note">' + t.note.replace(/[<>&]/g, '') + '</div>' : '');
+      stack.appendChild(div);
+      setTimeout(() => { div.style.transition='opacity .3s'; div.style.opacity='0'; }, 5500);
+      setTimeout(() => div.remove(), 6000);
+    }
+    async function poll(){
+      try {
+        const r = await fetch('/events/tx?since=' + since, {cache:'no-store'});
+        if (r.ok) {
+          const d = await r.json();
+          // listTransactions returns DESC; render oldest first so toasts stack chronologically.
+          for (const t of (d.txs || []).slice().reverse()) show(t);
+          since = d.now || since;
+        }
+      } catch {}
+      setTimeout(poll, 3000);
+    }
+    poll();
+  })();
+  </script>
 </body>
 </html>`
 }
@@ -88,13 +159,18 @@ export function shortHex(h: string, len = 10): string {
   return h.length <= len + 2 ? h : `${h.slice(0, 6)}…${h.slice(-4)}`
 }
 
+// xBZZ has 16 decimals on Gnosis (NOT 18). Also used for xDAI/wei display below
+// even though xDAI is 18 — this is a quick approximation acceptable for the
+// admin UI's "rough balance" view, not for financial calculations.
+const XBZZ_DECIMALS = 16n
 export function formatXBZZ(weiStr: string | bigint | null | undefined): string {
   if (weiStr === null || weiStr === undefined) return '—'
   const wei = typeof weiStr === 'bigint' ? weiStr : BigInt(weiStr)
-  const whole = wei / 10n ** 18n
-  const frac = wei % 10n ** 18n
+  const scale = 10n ** XBZZ_DECIMALS
+  const whole = wei / scale
+  const frac = wei % scale
   if (frac === 0n) return `${whole}`
-  const fracStr = (frac + 10n ** 18n).toString().slice(1).replace(/0+$/, '')
+  const fracStr = (frac + scale).toString().slice(1).replace(/0+$/, '')
   return `${whole}.${fracStr.slice(0, 6)}`
 }
 
