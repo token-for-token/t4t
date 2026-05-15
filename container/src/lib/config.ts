@@ -72,7 +72,12 @@ const Gateway = Common.extend({
   T4T_SELECTION_STRATEGY: z.enum(['cheapest', 'top_rep_cheapest', 'manual']).default('top_rep_cheapest'),
   // Optional cap on (input + output) wei per 1M tokens — providers above this are skipped.
   T4T_MAX_PRICE_PER_MILLION_TOKENS: z.coerce.bigint().optional(),
-  T4T_DEFAULT_DEADLINE_SECONDS: z.coerce.number().int().positive().default(300),
+  // Per-job delivery deadline. Must comfortably exceed the contract's
+  // ACK_WINDOW (30s) plus expected inference time plus mining latency. The
+  // contract reverts postJob if `deliveryDeadline <= block.timestamp +
+  // ACK_WINDOW` AT MINE TIME, so a tight 300s margin can race during slow
+  // blocks. 900s gives ~15min, comfortable for current models.
+  T4T_DEFAULT_DEADLINE_SECONDS: z.coerce.number().int().positive().default(900),
   T4T_FAKE_STREAMING: BoolFlag.default('true'),
   T4T_MANUAL_PROVIDER: Address.optional(),
   T4T_MODELS_CACHE_TTL_SECONDS: z.coerce.number().int().nonnegative().default(60),
