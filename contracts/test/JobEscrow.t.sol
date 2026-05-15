@@ -11,16 +11,19 @@ contract JobEscrowTest is Test {
     ProviderRegistry internal registry;
     JobEscrow internal escrow;
 
-    address internal treasury = makeAddr("treasury");
     address internal client   = makeAddr("client");
     address internal provider = makeAddr("provider");
 
     uint128 internal constant STAKE       = 100 ether;
     uint128 internal constant MAX_PAYMENT = 1 ether;
 
+    function _burn() internal view returns (address) {
+        return registry.BURN_ADDRESS();
+    }
+
     function setUp() public {
         xbzz     = new MockERC20("xBZZ", "xBZZ");
-        registry = new ProviderRegistry(xbzz, treasury);
+        registry = new ProviderRegistry(xbzz);
         escrow   = new JobEscrow(xbzz, registry);
         registry.setEscrow(address(escrow));
 
@@ -77,13 +80,11 @@ contract JobEscrowTest is Test {
         vm.prank(client);
         escrow.cancelJob(jobId);
 
-        // Client gets refund (1x) + clientShare slash (1.5x) = 2.5x maxPayment.
-        assertEq(
-            xbzz.balanceOf(client) - cliBefore,
-            uint256(MAX_PAYMENT) + (uint256(MAX_PAYMENT) * 3) / 2
-        );
-        // Treasury receives the remainder of the 2x slash (0.5x).
-        assertEq(xbzz.balanceOf(treasury), uint256(MAX_PAYMENT) / 2);
+        // Client gets only the refund — no share of slash, so no incentive to
+        // grief the provider into failing.
+        assertEq(xbzz.balanceOf(client) - cliBefore, uint256(MAX_PAYMENT));
+        // Full 2x slash is burned.
+        assertEq(xbzz.balanceOf(_burn()), uint256(MAX_PAYMENT) * 2);
         assertEq(uint256(registry.openJobs(provider)), 0);
     }
 
@@ -98,13 +99,9 @@ contract JobEscrowTest is Test {
         vm.prank(client);
         escrow.timeoutJob(jobId);
 
-        // 1x refund + 1.5x clientShare = 2.5x.
-        assertEq(
-            xbzz.balanceOf(client) - cliBefore,
-            uint256(MAX_PAYMENT) + (uint256(MAX_PAYMENT) * 3) / 2
-        );
-        // 3x slash - 1.5x client = 1.5x to treasury.
-        assertEq(xbzz.balanceOf(treasury), (uint256(MAX_PAYMENT) * 3) / 2);
+        assertEq(xbzz.balanceOf(client) - cliBefore, uint256(MAX_PAYMENT));
+        // Full 3x slash is burned.
+        assertEq(xbzz.balanceOf(_burn()), uint256(MAX_PAYMENT) * 3);
     }
 
     function test_postJob_revertsWhenProviderOffline() public {
@@ -301,7 +298,7 @@ contract JobEscrowTest is Test {
         // escrow to confirm slash > stake never drains beyond `stake`.
         uint128 stakeBefore = registry.getStake(provider);
         vm.prank(address(escrow));
-        registry.slash(provider, stakeBefore + 10 ether, client, 0, bytes32(0));
+        registry.slash(provider, stakeBefore + 10 ether, bytes32(0));
         assertEq(registry.getStake(provider), 0);
     }
 
@@ -349,27 +346,18 @@ contract JobEscrowTest is Test {
         bytes32 jobId = escrow.postJob(provider, bytes32(0), "m", payment, uint64(block.timestamp + 300));
         vm.warp(block.timestamp + escrow.ACK_WINDOW() + 1);
 
-        uint256 cliBefore     = xbzz.balanceOf(client);
-        uint256 treasuryBefore = xbzz.balanceOf(treasury);
+        uint256 cliBefore  = xbzz.balanceOf(client);
+        uint256 burnBefore = xbzz.balanceOf(_burn());
 
         vm.prank(client);
         escrow.cancelJob(jobId);
 
-        // Refund (= payment) + clientShare (= 1.5x payment) reach the client;
-        // remainder of the 2x slash goes to treasury (= 0.5x payment).
-        uint256 expectedRefund = uint256(payment);
-        uint256 expectedClient = (uint256(payment) * 3) / 2;
-        uint256 expectedTreasury = (uint256(payment) * 2) - expectedClient;
-        // MIN_SLASH = 1 BZZ floor — for tiny payments the slash is the floor.
+        // Client receives the refund only. Slash floors at MIN_SLASH and is
+        // fully burned — never paid out to client or treasury.
         uint256 rawSlash = uint256(payment) * 2;
         uint256 actualSlash = rawSlash < escrow.MIN_SLASH() ? escrow.MIN_SLASH() : rawSlash;
-        uint256 clientShareCapped = expectedClient > actualSlash ? actualSlash : expectedClient;
-        uint256 treasuryShare = actualSlash - clientShareCapped;
 
-        assertEq(xbzz.balanceOf(client) - cliBefore, expectedRefund + clientShareCapped);
-        assertEq(xbzz.balanceOf(treasury) - treasuryBefore, treasuryShare);
-        // The line below is kept intentionally to make the unhappy expectations
-        // explicit when the test fails — useful for triage.
-        assertEq(expectedTreasury > 0 || actualSlash == escrow.MIN_SLASH(), true);
+        assertEq(xbzz.balanceOf(client) - cliBefore, uint256(payment));
+        assertEq(xbzz.balanceOf(_burn()) - burnBefore, actualSlash);
     }
 }

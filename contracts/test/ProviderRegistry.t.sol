@@ -8,12 +8,11 @@ import {MockERC20} from "./MockERC20.sol";
 contract ProviderRegistryTest is Test {
     MockERC20 internal xbzz;
     ProviderRegistry internal registry;
-    address internal treasury = makeAddr("treasury");
     address internal provider = makeAddr("provider");
 
     function setUp() public {
         xbzz = new MockERC20("xBZZ", "xBZZ");
-        registry = new ProviderRegistry(xbzz, treasury);
+        registry = new ProviderRegistry(xbzz);
 
         xbzz.mint(provider, 1_000 ether);
         vm.prank(provider);
@@ -171,7 +170,7 @@ contract ProviderRegistryTest is Test {
         address attacker = makeAddr("attacker");
         vm.prank(attacker);
         vm.expectRevert(ProviderRegistry.NotEscrow.selector);
-        registry.slash(provider, 1 ether, makeAddr("c"), 0, bytes32(0));
+        registry.slash(provider, 1 ether, bytes32(0));
     }
 
     function test_addStake_incrementsAndEmitsEvent() public {

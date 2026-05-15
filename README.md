@@ -10,7 +10,7 @@ ENS: `t4t.eth`. Full protocol: [`docs/spec.md`](docs/spec.md).
 
 ```
 t4t/
-├── contracts/           # Foundry: ProviderRegistry, JobEscrow, Treasury
+├── contracts/           # Foundry: ProviderRegistry, JobEscrow
 │   ├── src/
 │   ├── test/
 │   └── script/Deploy.s.sol

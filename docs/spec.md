@@ -96,8 +96,8 @@ Client                                   Chain                        Provider
 
 ### Failure paths
 
-- **No ACK within `ACK_WINDOW`** (default 30s): client calls `cancelJob(jobId)`. Refund + slash from provider stake → client as apology.
-- **ACK but no delivery within `deadline`**: client calls `timeoutJob(jobId)`. Larger slash, refund + apology to client.
+- **No ACK within `ACK_WINDOW`** (default 30s): client calls `cancelJob(jobId)`. Client is refunded; the provider's stake is slashed and burned (see §4.2). The client gets no share of the slash — refund only.
+- **ACK but no delivery within `deadline`**: client calls `timeoutJob(jobId)`. Larger slash on the same burn-only terms; refund only to the client.
 - **Client never confirms / never online**: provider can still call `claimJob` with a valid `responseHash` and signature; the on-chain record is sufficient proof of delivery.
 - **Network partition / disputed delivery**: heartbeat history in the registry is the tiebreaker. Out of scope for v1 dispute UI — just slash on missed deadline.
 
@@ -212,16 +212,20 @@ event JobTimedOut(bytes32 indexed jobId, uint128 slash);
 ```
 
 **Slashing rules**
-- `cancelJob` (no ACK): slash = `min(stake, max(2 * maxPayment, MIN_SLASH))`. 1.5× `maxPayment` → client, remainder → treasury.
-- `timeoutJob` (ACKed but undelivered): slash = `min(stake, max(3 * maxPayment, MIN_SLASH))`. Same client/treasury split.
+- `cancelJob` (no ACK): slash = `min(stake, max(2 * maxPayment, MIN_SLASH))`. **100 % burned** (sent to `ProviderRegistry.BURN_ADDRESS = 0x…dEaD`). Client gets only their `maxPayment` refund — no share of the slash.
+- `timeoutJob` (ACKed but undelivered): slash = `min(stake, max(3 * maxPayment, MIN_SLASH))`. Same burn-only treatment, same refund.
 - `MIN_SLASH`: 1 xBZZ.
+
+Why pure burn rather than a client apology or a protocol treasury: any payout
+to either side creates an economic incentive to *make* a job fail. A client
+could withhold the encrypted payload long enough to trip `cancelJob`; a
+treasury-funded protocol team could be accused of the same — even if they
+never act on it. Burning the slash means the only beneficiary of a failed job
+is "nobody," which leaves liveness as the only path that compensates anyone.
+See §9 for the threat model.
 
 **Concurrency cap**
 `postJob` reverts if `provider.openJobs * MAX_SLASH_PER_JOB > provider.stake`. Prevents oversubscription wipeout.
-
-### 4.3 `Treasury.sol` (minimal v1)
-
-Receives slashed remainders. Multi-sig owned. Future: fund retries, grants, burns.
 
 ---
 
@@ -405,6 +409,7 @@ No off-chain rating in v1. Output-quality verification is deferred — we accept
 - **MITM on selection**: client reads provider's PSS pubkey from the on-chain registry, not from PSS, so a malicious peer can't substitute keys.
 - **Prompt privacy**: payloads encrypted end-to-end. Operator of the provider node can of course see decrypted prompts — same trust model as any local inference host. Document this clearly.
 - **Model-identity honesty**: the declared `modelId` is part of the SLA but is *not* cryptographically bound to the response in v1. A malicious provider can register `llama3:70b` pricing and serve `llama3:8b` (or a heavier-quantised variant), keeping the spread. Defenses in v1 are economic (liveness slashing) and reputational (client switching, see §8). Ollama's manifest digest (`/api/show.digest`) is available as a **soft signal** — useful at registration time to flag blob substitution against a known-good digest list — but it is not a proof: the provider operates the inference node and controls both what `/api/show` returns and which model `/api/chat` is actually routed to. We deliberately accept this trust band: the major commercial AI providers also swap underlying models without notifying clients, so requiring stronger guarantees here would be out of step with the industry. Hard proof of model identity (zkML, TEE attestations, statistical challenge protocols) is deferred — see §10.
+- **Client-side griefing of providers**: a slashing system that pays the slashed stake to anyone (the client, or a protocol treasury) creates the inverse incentive — *causing* a job to fail becomes profitable. A malicious client could withhold the encrypted request from Swarm, PSS-flood the provider, or front-run an ACK to trip `cancelJob`/`timeoutJob` and harvest the slash. A protocol-controlled treasury suffers the same critique from the outside, even if the operator never intends to act on it. v1 sidesteps the entire question by sending 100 % of every slash to `BURN_ADDRESS` (`0x…dEaD`), so no participant — client, operator, or anyone else — profits from a failed inference. The client's compensation is solely the refund + the option to retry against another provider; the cost of a single failed round-trip is low enough that this is acceptable. Heartbeat history and per-provider reputation (§8) remain the long-term sticks against unreliable providers; defending providers against clients that repeatedly post jobs they then cancel is left to provider-side address filtering — out of scope for v1.
 
 ---
 
@@ -427,8 +432,7 @@ t4t/
 ├── contracts/
 │   ├── src/
 │   │   ├── ProviderRegistry.sol
-│   │   ├── JobEscrow.sol
-│   │   └── Treasury.sol
+│   │   └── JobEscrow.sol
 │   ├── test/                          # Foundry: unit + fuzz + invariant
 │   ├── script/Deploy.s.sol
 │   └── foundry.toml
@@ -466,7 +470,7 @@ t4t/
 
 **M3 — Real network.** Two real Bee nodes, Chiado, multiple providers, client selection working, heartbeat + basic reputation.
 
-**M4 — Slashing live.** Liveness slashing, stake bonding/unbonding, treasury wired up.
+**M4 — Slashing live.** Liveness slashing (burn-only — see §4.2), stake bonding/unbonding.
 
 **M5 — Mainnet candidate.** Audit-prep pass on contracts, deploy to Gnosis Chain mainnet, frontend on Swarm at `t4t.eth`.
 

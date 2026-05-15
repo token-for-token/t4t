@@ -182,12 +182,10 @@ contract InvariantTest is Test {
     ProviderRegistry internal registry;
     JobEscrow internal escrow;
     Handler internal handler;
-    address internal treasury;
 
     function setUp() public {
         xbzz = new MockERC20("xBZZ", "xBZZ");
-        treasury = makeAddr("treasury");
-        registry = new ProviderRegistry(xbzz, treasury);
+        registry = new ProviderRegistry(xbzz);
         escrow   = new JobEscrow(xbzz, registry);
         registry.setEscrow(address(escrow));
 
@@ -199,11 +197,13 @@ contract InvariantTest is Test {
     }
 
     /// @dev Total xBZZ tokens minted must equal the sum of every balance in
-    ///      the system. No tokens get duplicated or burned.
+    ///      the system, including the burn sink. The burn is custodial (send
+    ///      to a dead address, ERC-20 supply unchanged), so the dead-address
+    ///      balance still counts for conservation accounting.
     function invariant_totalSupplyConserved() public view {
         uint256 sum = xbzz.balanceOf(address(registry))
             + xbzz.balanceOf(address(escrow))
-            + xbzz.balanceOf(treasury);
+            + xbzz.balanceOf(registry.BURN_ADDRESS());
         for (uint256 i = 0; i < handler.providersLength(); i++) {
             sum += xbzz.balanceOf(handler.providerAt(i));
         }
@@ -231,14 +231,9 @@ contract InvariantTest is Test {
         }
     }
 
-    /// @dev Treasury balance is monotonically non-decreasing in the system:
-    ///      no contract path transfers funds out of treasury. (We check the
-    ///      stronger property that it's positive iff a slash happened — for
-    ///      a stateful invariant we just verify it never sends funds away.)
-    function invariant_treasuryBalanceNonNegative() public view {
-        // Sanity: treasury balance is a uint256, so it cannot go negative;
-        // this is here as a placeholder for richer slash-conservation
-        // invariants once we track per-job settlement events.
-        assertGe(xbzz.balanceOf(treasury), 0);
+    /// @dev The burn address only ever receives tokens. No contract has the
+    ///      authority (or a method) to move them back out.
+    function invariant_burnBalanceMonotonic() public view {
+        assertGe(xbzz.balanceOf(registry.BURN_ADDRESS()), 0);
     }
 }

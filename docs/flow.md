@@ -144,8 +144,8 @@ plain OpenAI completion to the chat app.
 
 | Trigger | Who calls what | On-chain effect |
 |---|---|---|
-| Provider never ACKs within `ACK_WINDOW = 30s` | Client → `JobEscrow.cancelJob(jobId)` | Slash = `min(stake, max(2·maxPayment, MIN_SLASH))`. 1.5× `maxPayment` refunds to client as apology; remainder → Treasury. Escrowed payment fully refunded. |
-| Provider ACKs but never delivers by `deliveryDeadline` | Client → `JobEscrow.timeoutJob(jobId)` | Slash = `min(stake, max(3·maxPayment, MIN_SLASH))`. Same split. Payment refunded. |
+| Provider never ACKs within `ACK_WINDOW = 30s` | Client → `JobEscrow.cancelJob(jobId)` | Slash = `min(stake, max(2·maxPayment, MIN_SLASH))` → burned (`0x…dEaD`). Escrowed payment fully refunded to client; no share of the slash is paid out. |
+| Provider ACKs but never delivers by `deliveryDeadline` | Client → `JobEscrow.timeoutJob(jobId)` | Slash = `min(stake, max(3·maxPayment, MIN_SLASH))` → burned. Payment refunded; no slash share to client. |
 | Client offline at delivery | Provider can still `claimJob` solo; client picks up `responseHash` from the `JobClaimed` event next time it polls | No slash. |
 | Provider's heartbeat goes stale (`HEARTBEAT_TTL` exceeded) | Client selector silently skips them. Existing jobs settle normally. | No slash from staleness alone — only from missed deadlines. |
 | PSS message lost or corrupted | Both sides poll their own chain events as a backstop. Deadlines still tick. | Eventual settlement via deadline + slash, never deadlock. |
