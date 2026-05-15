@@ -56,49 +56,208 @@ export function layout(opts: LayoutOpts): string {
 <head>
   <meta charset="utf-8">
   <title>${escape(opts.title)}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
   <script src="https://unpkg.com/htmx.org@1.9.12" integrity="sha384-ujb1lZYygJmzgSwoxRggbCHcjc0rB2XoQrxeTUQyRjrOnlCoYta87iKBWq3EsdM2" crossorigin="anonymous"></script>
   <style>
-    body{font:14px/1.4 system-ui,sans-serif;margin:0;background:#fafafa;color:#222}
-    header{background:#111;color:#eee;padding:12px 24px;display:flex;gap:24px;align-items:center}
-    header h1{margin:0;font-size:16px;font-weight:600}
-    header nav a{color:#bbb;text-decoration:none;margin-right:16px}
-    header nav a.active{color:#fff;border-bottom:2px solid #fff}
-    main{padding:24px;max-width:1200px;margin:0 auto}
-    section{background:#fff;padding:16px;border-radius:6px;margin-bottom:16px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
-    h2{margin:0 0 12px;font-size:15px}
-    table{width:100%;border-collapse:collapse;font-size:13px}
-    th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #eee;vertical-align:top}
-    th{background:#f5f5f5;font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#555}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
-    .pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;text-transform:uppercase}
-    .pill-queued{background:#eef;color:#447}
-    .pill-running{background:#fef6e0;color:#7a5}
-    .pill-delivered{background:#e6f4ff;color:#157}
-    .pill-claimed{background:#e8f7ec;color:#262}
-    .pill-failed{background:#fde8e8;color:#a22}
-    .pill-posted{background:#eef;color:#447}
-    .pill-acked{background:#fef6e0;color:#7a5}
-    .pill-cancelled{background:#fde8e8;color:#a22}
-    .pill-timed_out{background:#fde8e8;color:#a22}
-    .kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;font-size:13px}
-    .kv dt{color:#666}
-    .kv dd{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-    .ok{color:#262}
-    .warn{color:#a60}
-    .err{color:#a22}
-    .muted{color:#888}
+    :root{
+      --bg:#0a0a0a; --bg-elev:#131313; --bg-deeper:#050505;
+      --ink:#ededed; --ink-dim:#8a8a8a; --ink-faint:#4a4a4a;
+      --line:#222; --line-strong:#333;
+      --xbzz:#ff5c00; --xbzz-hot:#ff7424;
+      --gnosis:#04795b; --swarm:#ffd400; --slash:#ff2d2d; --live:#00ff9c;
+      --font-display:'JetBrains Mono',ui-monospace,monospace;
+      --font-mono:'Space Mono',ui-monospace,monospace;
+    }
+    *,*::before,*::after{box-sizing:border-box}
+    html,body{
+      margin:0;padding:0;background:var(--bg);color:var(--ink);
+      font:13px/1.5 var(--font-mono);
+      -webkit-font-smoothing:antialiased;
+    }
+    body{
+      background-image:
+        linear-gradient(var(--line) 1px,transparent 1px),
+        linear-gradient(90deg,var(--line) 1px,transparent 1px);
+      background-size:48px 48px;
+      background-attachment:fixed;
+    }
+    a{color:var(--xbzz);text-decoration:none;border-bottom:1px dashed var(--xbzz)}
+    a:hover{color:var(--xbzz-hot);border-color:var(--xbzz-hot)}
+
+    header{
+      background:var(--bg-deeper);
+      border-bottom:1px solid var(--line-strong);
+      padding:0 24px;display:flex;gap:0;align-items:stretch;
+      position:sticky;top:0;z-index:10;
+      min-height:46px;
+    }
+    header h1{
+      margin:0;padding:14px 24px 14px 0;font-family:var(--font-display);
+      font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+      color:var(--ink);align-self:center;
+      border-right:1px solid var(--line-strong);
+    }
+    header h1::before{content:"▮ ";color:var(--xbzz)}
+    header nav{display:flex;gap:0;align-items:stretch}
+    header nav a{
+      color:var(--ink-dim);text-decoration:none;border:none;
+      padding:0 18px;display:inline-flex;align-items:center;
+      font-family:var(--font-display);font-size:11px;font-weight:700;
+      letter-spacing:.1em;text-transform:uppercase;
+      border-right:1px solid var(--line-strong);
+      transition:color 80ms linear,background 80ms linear;
+    }
+    header nav a:hover{color:var(--ink);background:var(--bg-elev)}
+    header nav a.active{color:var(--ink);background:var(--bg-elev);box-shadow:inset 0 -2px 0 var(--xbzz)}
+    header .pulse-flag{
+      margin-left:auto;align-self:center;display:inline-flex;align-items:center;gap:8px;
+      font-family:var(--font-display);font-size:10px;letter-spacing:.12em;
+      text-transform:uppercase;color:var(--ink-dim);
+    }
+    header .pulse-flag::before{
+      content:"";width:6px;height:6px;background:var(--live);
+      box-shadow:0 0 8px var(--live);animation:t4tpulse 1.4s ease-in-out infinite;
+    }
+    @keyframes t4tpulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+    main{padding:24px;max-width:1280px;margin:0 auto;position:relative;z-index:2}
+
+    section{
+      background:var(--bg-elev);
+      border:1px solid var(--line-strong);
+      padding:20px;
+      margin-bottom:16px;
+    }
+    section>:first-child{margin-top:0}
+    section>:last-child{margin-bottom:0}
+
+    h2{
+      margin:0 0 14px;font-family:var(--font-display);
+      font-size:12px;font-weight:700;letter-spacing:.1em;
+      text-transform:uppercase;color:var(--ink);
+      padding-bottom:10px;border-bottom:1px solid var(--line);
+    }
+    h3{
+      margin:18px 0 10px;font-family:var(--font-display);
+      font-size:12px;font-weight:700;letter-spacing:.08em;
+      text-transform:uppercase;color:var(--ink);
+    }
+    p{margin:0 0 12px;color:var(--ink-dim);font-size:13px;line-height:1.6}
+    strong{color:var(--ink);font-weight:700}
+
+    pre{
+      background:var(--bg-deeper)!important;
+      border:1px solid var(--line-strong);
+      padding:14px 16px!important;
+      color:var(--ink);font-family:var(--font-mono);font-size:12px;
+      overflow:auto;border-radius:0!important;margin:8px 0 14px;
+    }
+    code{
+      background:var(--bg-deeper);padding:1px 5px;
+      border:1px solid var(--line);color:var(--xbzz);font-size:12px;
+    }
+
+    table{
+      width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:13px;
+    }
+    th,td{
+      text-align:left;padding:10px 16px;
+      border-bottom:1px solid var(--line);vertical-align:top;
+    }
+    th{
+      font-family:var(--font-display);font-weight:700;font-size:10px;
+      text-transform:uppercase;letter-spacing:.12em;color:var(--ink-faint);
+      background:var(--bg-deeper);border-bottom:1px solid var(--line-strong);
+    }
+    tbody tr:last-child td{border-bottom:none}
+    tbody tr:hover td{background:rgba(255,92,0,.03)}
+
+    .mono{font-family:var(--font-mono);font-size:12px}
+
+    .pill{
+      display:inline-flex;align-items:center;gap:5px;
+      font-family:var(--font-display);font-size:10px;font-weight:700;
+      letter-spacing:.12em;text-transform:uppercase;
+      padding:3px 8px;border:1px solid currentColor;
+      background:var(--bg-deeper);
+    }
+    .pill::before{content:"";width:5px;height:5px;background:currentColor}
+    .pill-queued,.pill-posted{color:var(--ink-dim)}
+    .pill-running,.pill-acked{color:var(--swarm)}
+    .pill-delivered{color:var(--live)}
+    .pill-claimed{color:var(--gnosis)}
+    .pill-failed,.pill-cancelled,.pill-timed_out{color:var(--slash)}
+
+    .kv{
+      display:grid;grid-template-columns:max-content 1fr;
+      gap:8px 24px;font-size:13px;margin:0 0 4px;
+    }
+    .kv dt{
+      color:var(--ink-faint);font-family:var(--font-display);
+      font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+      align-self:center;
+    }
+    .kv dd{margin:0;font-family:var(--font-mono);color:var(--ink);font-size:13px;align-self:center}
+
+    .ok{color:var(--live)}
+    .warn{color:var(--swarm)}
+    .err{color:var(--slash)}
+    .muted{color:var(--ink-dim)}
+
     .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
     @media(max-width:800px){.grid2{grid-template-columns:1fr}}
-    textarea,input[type=text]{width:100%;font:13px ui-monospace,SFMono-Regular,Menlo,monospace;padding:8px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box}
-    button{font:inherit;padding:6px 14px;border:1px solid #444;background:#222;color:#fff;border-radius:4px;cursor:pointer;margin-top:8px}
-    button:hover{background:#000}
-    .mnemonic{padding:14px;background:#fafaf0;border:1px solid #d9c27e;border-radius:4px;font-size:14px;line-height:1.8;margin:8px 0 12px;word-spacing:8px}
-    label.inline{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:13px;color:#555}
-    .toast-stack{position:fixed;top:16px;right:16px;display:flex;flex-direction:column;gap:8px;z-index:1000;pointer-events:none}
-    .toast{background:#222;color:#fff;padding:10px 14px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.25);min-width:280px;font-size:13px;pointer-events:auto;animation:toastIn .2s ease-out}
-    .toast a{color:#9ec6ff;text-decoration:underline}
-    .toast .kind{font-weight:600;display:block;margin-bottom:2px}
-    .toast .hash,.toast .note{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#bbb}
+
+    textarea,input[type=text]{
+      width:100%;font:13px/1.5 var(--font-mono);padding:9px 12px;
+      background:var(--bg-deeper);border:1px solid var(--line-strong);
+      color:var(--ink);outline:none;
+    }
+    textarea:focus,input[type=text]:focus{border-color:var(--xbzz)}
+    textarea::placeholder,input[type=text]::placeholder{color:var(--ink-faint)}
+
+    button{
+      font-family:var(--font-display);font-size:11px;font-weight:700;
+      letter-spacing:.1em;text-transform:uppercase;
+      padding:8px 16px;border:1px solid var(--ink);
+      background:transparent;color:var(--ink);
+      cursor:pointer;transition:all 80ms linear;margin-top:8px;
+    }
+    button:hover{background:var(--ink);color:var(--bg)}
+
+    .mnemonic{
+      padding:18px;background:var(--bg-deeper);
+      border:1px solid var(--swarm);
+      font:16px/1.9 var(--font-mono);
+      margin:8px 0 14px;word-spacing:8px;color:var(--swarm);
+    }
+    label.inline{
+      display:flex;align-items:center;gap:8px;
+      margin:10px 0;font-size:12px;color:var(--ink-dim);
+    }
+
+    form{margin:0}
+
+    /* toasts */
+    .toast-stack{
+      position:fixed;top:62px;right:16px;
+      display:flex;flex-direction:column;gap:8px;z-index:1000;pointer-events:none;
+    }
+    .toast{
+      background:var(--bg-elev);color:var(--ink);
+      border:1px solid var(--line-strong);
+      border-left:3px solid var(--xbzz);
+      padding:12px 16px;min-width:300px;font-size:12px;
+      pointer-events:auto;animation:toastIn .2s ease-out;
+      font-family:var(--font-mono);
+    }
+    .toast a{color:var(--xbzz);border:none;text-decoration:underline}
+    .toast .kind{
+      font-family:var(--font-display);font-weight:700;letter-spacing:.12em;
+      text-transform:uppercase;font-size:10px;display:block;margin-bottom:4px;color:var(--xbzz);
+    }
+    .toast .hash,.toast .note{font-family:var(--font-mono);font-size:11px;color:var(--ink-dim)}
     @keyframes toastIn{from{transform:translateX(24px);opacity:0}to{transform:translateX(0);opacity:1}}
   </style>
 </head>
@@ -108,6 +267,7 @@ export function layout(opts: LayoutOpts): string {
     <nav>
       ${tabs.map(tab).join('\n      ')}
     </nav>
+    <span class="pulse-flag">Network Live</span>
   </header>
   <main hx-target="this" hx-swap="innerHTML">
     ${opts.body}
@@ -124,7 +284,7 @@ export function layout(opts: LayoutOpts): string {
       const div = document.createElement('div');
       div.className = 'toast';
       div.innerHTML =
-        '<span class="kind">⛓ ' + t.kind + '</span>' +
+        '<span class="kind">TX · ' + t.kind + '</span>' +
         '<a class="hash" href="https://gnosisscan.io/tx/' + t.hash + '" target="_blank" rel="noopener">' + shorthex(t.hash) + '</a>' +
         (t.note ? '<div class="note">' + t.note.replace(/[<>&]/g, '') + '</div>' : '');
       stack.appendChild(div);
