@@ -380,12 +380,23 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
       },
       msg => chain.wallet.signMessage({account: chain.wallet.account!, message: msg}),
     )
-    await pss.send({
-      topic: providerTopic(target.provider.owner),
-      recipientOverlay: target.provider.swarmOverlay,
-      recipientPssKey: target.provider.pssPublicKey,
-      envelope: env,
-    })
+    try {
+      await pss.send({
+        topic: providerTopic(target.provider.owner),
+        recipientOverlay: target.provider.swarmOverlay,
+        recipientPssKey: target.provider.pssPublicKey,
+        envelope: env,
+      })
+    } catch (err) {
+      // If we never managed to PSS-notify the provider, the orphaned `settled`
+      // promise would later be rejected by the ACK-timeout timer and crash the
+      // process (unhandledRejection). Drop the pending state synchronously so
+      // the timer becomes a no-op, then surface the error to the HTTP layer.
+      pending.delete(jobIdRouting)
+      jobMeta.delete(jobIdRouting)
+      clearFailureTimers(jobIdRouting)
+      throw err
+    }
 
     return settled
   }

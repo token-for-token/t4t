@@ -77,6 +77,16 @@ async function runWithdrawStake() {
   log.info({tx, stake: p.stake.toString()}, 'withdraw tx sent')
 }
 
+// Best-effort safety net: log unhandled rejections instead of crashing the
+// container. Background work (PSS timers, retries) can throw long after the
+// origin caller has returned; we'd rather log and keep serving than die.
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error({err: reason, promise}, 'unhandledRejection (suppressed)')
+})
+process.on('uncaughtException', err => {
+  logger.error({err}, 'uncaughtException (suppressed)')
+})
+
 main().catch(err => {
   logger.fatal({err}, 't4t crashed')
   process.exit(1)

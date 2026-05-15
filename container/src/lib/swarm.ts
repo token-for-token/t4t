@@ -73,9 +73,16 @@ export class PssTransport {
     // First 2 bytes of the overlay narrow PSS forwarding without doxxing
     // the full target address (Bee convention).
     const target = args.recipientOverlay.slice(2, 6)
-    const pubKey = args.recipientPssKey.startsWith('0x')
-      ? args.recipientPssKey.slice(2)
-      : args.recipientPssKey
+    // The on-chain registry stores `pssPublicKey` as bytes32 (X coord only)
+    // and our keygen guarantees even-Y parity (see lib/keys.ts), so prepend
+    // 0x02 to rebuild the 33-byte compressed pubkey form bee-js' PublicKey
+    // class accepts. Passing bare 32 bytes throws
+    //   "Bytes#checkByteLength: bytes length is 32 but expected 64".
+    const x = args.recipientPssKey.replace(/^0x/, '')
+    if (x.length !== 64) {
+      throw new Error(`recipient PSS pubkey must be 32-byte X coord (got ${x.length / 2} bytes)`)
+    }
+    const pubKey = '02' + x
     await this.opts.bee.pssSend(
       this.opts.postageBatchId,
       topic,
