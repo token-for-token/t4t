@@ -448,11 +448,11 @@ t4t/
 │   └── package.json
 ├── docs/
 │   ├── spec.md                        # this file
-│   ├── getting-started-client.md
+│   ├── getting-started-gateway.md
 │   ├── getting-started-provider.md
 │   └── architecture.md
 ├── docker-compose.provider-example.yml
-├── docker-compose.client-example.yml
+├── docker-compose.gateway-example.yml
 └── README.md
 ```
 

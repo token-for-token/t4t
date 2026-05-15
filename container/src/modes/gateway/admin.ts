@@ -1,13 +1,13 @@
 import express from 'express'
 import type {Bee} from '@ethersphere/bee-js'
 import type {ChainClient} from '../../lib/chain'
-import type {ClientJobRow, JobsDb} from '../../lib/jobs-db'
+import type {GatewayJobRow, JobsDb} from '../../lib/jobs-db'
 import type {Logger} from '../../lib/logger'
 import type {ModelDiscovery} from './models'
 import type {OpenAIChatRequest, OpenAIChatResponse} from '../../lib/types'
 import {attachClientApi} from './server'
 import {
-  CLIENT_TABS,
+  GATEWAY_TABS,
   escape,
   formatTs,
   formatXBZZ,
@@ -16,7 +16,7 @@ import {
   statusPill,
 } from '../../lib/admin-html'
 
-export interface ClientAdminDeps {
+export interface GatewayAdminDeps {
   host: string
   port: number
   statusRefreshSeconds: number
@@ -37,7 +37,7 @@ export interface ClientAdminDeps {
   logger: Logger
 }
 
-export function startAdminServer(deps: ClientAdminDeps): void {
+export function startAdminServer(deps: GatewayAdminDeps): void {
   const app = express()
 
   // Mount the OpenAI-compatible API (/v1/*) on the same Express instance so
@@ -60,19 +60,19 @@ export function startAdminServer(deps: ClientAdminDeps): void {
   })
 
   app.get('/', (_req, res) => {
-    const rows = deps.db.listClientJobs({limit: 200})
+    const rows = deps.db.listGatewayJobs({limit: 200})
     res.send(
       layout({
-        title: 't4t client',
+        title: 't4t gateway',
         refreshSeconds: 3,
-        active: 'jobs', tabs: CLIENT_TABS,
+        active: 'jobs', tabs: GATEWAY_TABS,
         body: jobsPage(rows, deps.db.totalSpentXBZZ(), deps.pendingCount(), deps.payloadsPersisted),
       }),
     )
   })
 
   app.get('/jobs/rows', (_req, res) => {
-    const rows = deps.db.listClientJobs({limit: 200})
+    const rows = deps.db.listGatewayJobs({limit: 200})
     res.send(jobsTableBody(rows, deps.payloadsPersisted))
   })
 
@@ -80,9 +80,9 @@ export function startAdminServer(deps: ClientAdminDeps): void {
     const status = await collectStatus(deps).catch(err => ({err: String(err)} as Record<string, unknown>))
     res.send(
       layout({
-        title: 't4t client',
+        title: 't4t gateway',
         refreshSeconds: deps.statusRefreshSeconds,
-        active: 'status', tabs: CLIENT_TABS,
+        active: 'status', tabs: GATEWAY_TABS,
         body: statusPage(status, deps.statusRefreshSeconds),
       }),
     )
@@ -97,9 +97,9 @@ export function startAdminServer(deps: ClientAdminDeps): void {
     const models = await deps.discovery.list().catch(() => [])
     res.send(
       layout({
-        title: 't4t client',
+        title: 't4t gateway',
         refreshSeconds: deps.statusRefreshSeconds,
-        active: 'models', tabs: CLIENT_TABS,
+        active: 'models', tabs: GATEWAY_TABS,
         body: modelsPage(models),
       }),
     )
@@ -109,9 +109,9 @@ export function startAdminServer(deps: ClientAdminDeps): void {
     const providers = await deps.discovery.listProviders().catch(() => [])
     res.send(
       layout({
-        title: 't4t client',
+        title: 't4t gateway',
         refreshSeconds: deps.statusRefreshSeconds,
-        active: 'providers', tabs: CLIENT_TABS,
+        active: 'providers', tabs: GATEWAY_TABS,
         body: providersPage(providers),
       }),
     )
@@ -120,9 +120,9 @@ export function startAdminServer(deps: ClientAdminDeps): void {
   app.get('/wallet', async (_req, res) => {
     res.send(
       layout({
-        title: 't4t client',
+        title: 't4t gateway',
         refreshSeconds: deps.statusRefreshSeconds,
-        active: 'wallet', tabs: CLIENT_TABS,
+        active: 'wallet', tabs: GATEWAY_TABS,
         body: await walletPage(deps),
       }),
     )
@@ -133,7 +133,7 @@ export function startAdminServer(deps: ClientAdminDeps): void {
   )
 }
 
-function jobsPage(rows: ClientJobRow[], spent: bigint, pending: number, payloads: boolean): string {
+function jobsPage(rows: GatewayJobRow[], spent: bigint, pending: number, payloads: boolean): string {
   const success = rows.filter(r => r.status === 'delivered' || r.status === 'claimed').length
   const rate = rows.length === 0 ? '—' : `${Math.round((success * 100) / rows.length)}%`
   return `
@@ -161,7 +161,7 @@ function jobsPage(rows: ClientJobRow[], spent: bigint, pending: number, payloads
 </section>`
 }
 
-function jobsTableBody(rows: ClientJobRow[], payloads: boolean): string {
+function jobsTableBody(rows: GatewayJobRow[], payloads: boolean): string {
   if (rows.length === 0) return `<tr><td colspan="10" class="muted">No jobs yet.</td></tr>`
   return rows
     .map(
@@ -302,7 +302,7 @@ function providersPage(providers: import('./models').ProviderListing[]): string 
 ${sections}`
 }
 
-async function collectStatus(deps: ClientAdminDeps): Promise<Record<string, unknown>> {
+async function collectStatus(deps: GatewayAdminDeps): Promise<Record<string, unknown>> {
   const beeUrl = (deps.bee as unknown as {url?: string}).url ?? ''
   const [beeOk, overlay, block, gasBalance, xbzzBalance] = await Promise.all([
     deps.bee
@@ -333,7 +333,7 @@ async function collectStatus(deps: ClientAdminDeps): Promise<Record<string, unkn
       .catch(() => undefined),
   ])
   const lastSuccess = deps.db
-    .listClientJobs({limit: 1})
+    .listGatewayJobs({limit: 1})
     .find(r => r.status === 'delivered' || r.status === 'claimed')?.deliveredAt
   return {
     bee: {url: beeUrl, ok: beeOk, overlay, postageBatchId: deps.postageBatchId},
@@ -342,7 +342,7 @@ async function collectStatus(deps: ClientAdminDeps): Promise<Record<string, unkn
   }
 }
 
-async function walletPage(deps: ClientAdminDeps): Promise<string> {
+async function walletPage(deps: GatewayAdminDeps): Promise<string> {
   const address = deps.chain.address
   const [gas, xbzz] = await Promise.all([
     deps.chain.pub.getBalance({address}).catch(() => undefined),

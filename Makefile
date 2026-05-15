@@ -36,9 +36,9 @@ install-container: ## Install container npm dependencies
 anvil: ## Start local Anvil fork of Gnosis Chain
 	anvil --fork-url $(RPC_URL) --chain-id 100 --port 8545
 
-.PHONY: dev-client
-dev-client: ## Run client mode with tsx watch
-	cd container && T4T_MODE=client npm run dev
+.PHONY: dev-gateway
+dev-gateway: ## Run gateway mode with tsx watch
+	cd container && T4T_MODE=gateway npm run dev
 
 .PHONY: dev-provider
 dev-provider: ## Run provider mode with tsx watch

@@ -2,7 +2,7 @@ import express, {type Express, type Request, type Response} from 'express'
 import type {Logger} from '../../lib/logger'
 import type {OpenAIChatRequest, OpenAIChatResponse} from '../../lib/types'
 
-export interface ClientApiDeps {
+export interface GatewayApiDeps {
   logger: Logger
   fakeStreaming: boolean
   /** Wire the actual T4T round-trip: post job, await delivery, return response. */
@@ -14,7 +14,7 @@ export interface ClientApiDeps {
 /** Mount the OpenAI-compatible client API onto an existing Express app.
  *  The admin server owns the listener; we just register `/v1/*` routes so
  *  there's a single HTTP port for both operator UI and SDK consumers. */
-export function attachClientApi(app: Express, deps: ClientApiDeps): void {
+export function attachClientApi(app: Express, deps: GatewayApiDeps): void {
   // 10mb cap for chat-completion bodies — apply per-route so the admin
   // server's smaller global json limit isn't accidentally widened.
   const big = express.json({limit: '10mb'})

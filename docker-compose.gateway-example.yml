@@ -1,9 +1,9 @@
-# Example compose for running a T4T client + OpenWebUI. Copy to
-# docker-compose.yml and edit. The client routes OpenAI-style chat requests
+# Example compose for running a T4T gateway + OpenWebUI. Copy to
+# docker-compose.yml and edit. The gateway routes OpenAI-style chat requests
 # through the t4t marketplace, buying inference from providers on Gnosis.
 #
 # First-boot flow:
-#   1. `mkdir -p data/client && docker compose up -d`
+#   1. `mkdir -p data/gateway && docker compose up -d`
 #   2. Open http://localhost:3000/wallet → Generate or import a wallet
 #   3. Fund the new address with xDAI (gas) and some xBZZ (per-job payment)
 #   4. The page polls every 10s and auto-advances through onboarding phases
@@ -16,27 +16,27 @@ services:
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     restart: unless-stopped
-    depends_on: [t4t-client]
+    depends_on: [t4t-gateway]
     environment:
-      # All chat traffic goes through t4t-client's OpenAI-compatible endpoint.
+      # All chat traffic goes through t4t-gateway's OpenAI-compatible endpoint.
       # Admin UI and /v1/* live on the same port now (3000).
-      OPENAI_API_BASE_URL: http://t4t-client:3000/v1
-      OPENAI_API_KEY: t4t                  # any non-empty value; t4t-client doesn't check
+      OPENAI_API_BASE_URL: http://t4t-gateway:3000/v1
+      OPENAI_API_KEY: t4t                  # any non-empty value; t4t-gateway doesn't check
       ENABLE_OLLAMA_API: "false"           # don't autodetect a host Ollama
       WEBUI_AUTH: "false"                  # skip login wall for local dev; enable for multi-user
     ports:
-      - "8000:8080"            # OpenWebUI on http://localhost:8000 (client holds 3000)
+      - "8000:8080"            # OpenWebUI on http://localhost:8000 (gateway holds 3000)
     volumes:
       - open_webui_data:/app/backend/data
 
-  t4t-client:
+  t4t-gateway:
     image: t4t:dev
     build: ./container
     restart: unless-stopped
     environment:
-      T4T_MODE: client
+      T4T_MODE: gateway
       # Bee node API. Run your own (see commented `bee:` service below) or
-      # point at a hosted one. The client uses Bee to send PSS requests to
+      # point at a hosted one. The gateway uses Bee to send PSS requests to
       # providers and download response chunks.
       BEE_API_URL: http://bee:1633
       #
@@ -55,7 +55,7 @@ services:
       # T4T_SELECTION_STRATEGY: "top_rep_cheapest"      # default — see spec §8
       # T4T_MAX_PRICE_PER_MILLION_TOKENS: "20000000000000000"  # 2 BZZ cap; unset = no cap
       # T4T_DEFAULT_DEADLINE_SECONDS: "300"             # default — per-job delivery deadline
-      # T4T_FAKE_STREAMING: "true"                      # default — chunk response client-side
+      # T4T_FAKE_STREAMING: "true"                      # default — chunk response gateway-side
       # T4T_ALLOWED_MODELS: "qwen2.5:0.5b,llama3.2:3b"  # comma-separated allow-list
       # T4T_MIN_PROVIDERS_PER_MODEL: "1"                # default
       # T4T_ADMIN_HOST: "0.0.0.0"
@@ -66,10 +66,10 @@ services:
       # Bind-mount so wallet.key / pss.key / jobs.db are operator-visible
       # files (easy backup), not opaque docker volumes. The host folder
       # must be owned by uid 1000 (matches the container's `node` user):
-      #   mkdir -p data/client
-      - ./data/client:/data
+      #   mkdir -p data/gateway
+      - ./data/gateway:/data
 
-  # Run your own Bee node alongside the client. Skip this block if you
+  # Run your own Bee node alongside the gateway. Skip this block if you
   # already have a Bee node reachable from the docker network (point
   # BEE_API_URL at it).
   # bee:

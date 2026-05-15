@@ -42,7 +42,7 @@ export interface ProviderJobRow {
   errorMessage: string | null
 }
 
-export interface ClientJobRow {
+export interface GatewayJobRow {
   jobId: string
   provider: string
   modelId: string
@@ -79,8 +79,8 @@ CREATE INDEX IF NOT EXISTS provider_jobs_received ON provider_jobs(receivedAt);
 CREATE INDEX IF NOT EXISTS provider_jobs_status ON provider_jobs(status);
 `
 
-const CLIENT_SCHEMA = `
-CREATE TABLE IF NOT EXISTS client_jobs (
+const GATEWAY_SCHEMA = `
+CREATE TABLE IF NOT EXISTS gateway_jobs (
   jobId            TEXT PRIMARY KEY,
   provider         TEXT NOT NULL,
   modelId          TEXT NOT NULL,
@@ -97,8 +97,8 @@ CREATE TABLE IF NOT EXISTS client_jobs (
   completionTokens INTEGER,
   errorMessage     TEXT
 );
-CREATE INDEX IF NOT EXISTS client_jobs_posted ON client_jobs(postedAt);
-CREATE INDEX IF NOT EXISTS client_jobs_status ON client_jobs(status);
+CREATE INDEX IF NOT EXISTS client_jobs_posted ON gateway_jobs(postedAt);
+CREATE INDEX IF NOT EXISTS client_jobs_status ON gateway_jobs(status);
 `
 
 const TX_SCHEMA = `
@@ -136,7 +136,7 @@ export class JobsDb {
     this.db = new Database(opts.path)
     this.db.pragma('journal_mode = WAL')
     this.db.exec(PROVIDER_SCHEMA)
-    this.db.exec(CLIENT_SCHEMA)
+    this.db.exec(GATEWAY_SCHEMA)
     this.db.exec(TX_SCHEMA)
   }
 
@@ -212,37 +212,37 @@ export class JobsDb {
 
   // ---------- client ----------
 
-  recordClientJob(row: ClientJobRow): void {
+  recordGatewayJob(row: GatewayJobRow): void {
     this.db
       .prepare(
-        `INSERT INTO client_jobs(jobId, provider, modelId, status, maxPayment, actualPayment, postedAt, ackedAt, deliveredAt, claimedAt, prompt, response, promptTokens, completionTokens, errorMessage)
+        `INSERT INTO gateway_jobs(jobId, provider, modelId, status, maxPayment, actualPayment, postedAt, ackedAt, deliveredAt, claimedAt, prompt, response, promptTokens, completionTokens, errorMessage)
          VALUES (@jobId, @provider, @modelId, @status, @maxPayment, @actualPayment, @postedAt, @ackedAt, @deliveredAt, @claimedAt, @prompt, @response, @promptTokens, @completionTokens, @errorMessage)
          ON CONFLICT(jobId) DO UPDATE SET
            status           = excluded.status,
-           actualPayment    = COALESCE(excluded.actualPayment, client_jobs.actualPayment),
-           ackedAt          = COALESCE(excluded.ackedAt, client_jobs.ackedAt),
-           deliveredAt      = COALESCE(excluded.deliveredAt, client_jobs.deliveredAt),
-           claimedAt        = COALESCE(excluded.claimedAt, client_jobs.claimedAt),
-           prompt           = COALESCE(excluded.prompt, client_jobs.prompt),
-           response         = COALESCE(excluded.response, client_jobs.response),
-           promptTokens     = COALESCE(excluded.promptTokens, client_jobs.promptTokens),
-           completionTokens = COALESCE(excluded.completionTokens, client_jobs.completionTokens),
-           errorMessage     = COALESCE(excluded.errorMessage, client_jobs.errorMessage)`,
+           actualPayment    = COALESCE(excluded.actualPayment, gateway_jobs.actualPayment),
+           ackedAt          = COALESCE(excluded.ackedAt, gateway_jobs.ackedAt),
+           deliveredAt      = COALESCE(excluded.deliveredAt, gateway_jobs.deliveredAt),
+           claimedAt        = COALESCE(excluded.claimedAt, gateway_jobs.claimedAt),
+           prompt           = COALESCE(excluded.prompt, gateway_jobs.prompt),
+           response         = COALESCE(excluded.response, gateway_jobs.response),
+           promptTokens     = COALESCE(excluded.promptTokens, gateway_jobs.promptTokens),
+           completionTokens = COALESCE(excluded.completionTokens, gateway_jobs.completionTokens),
+           errorMessage     = COALESCE(excluded.errorMessage, gateway_jobs.errorMessage)`,
       )
       .run(row)
   }
 
-  listClientJobs(opts: {sinceSeconds?: number; limit?: number} = {}): ClientJobRow[] {
+  listGatewayJobs(opts: {sinceSeconds?: number; limit?: number} = {}): GatewayJobRow[] {
     const since = opts.sinceSeconds ?? Math.floor(Date.now() / 1000) - 7 * 86400
     const limit = opts.limit ?? 500
     return this.db
-      .prepare(`SELECT * FROM client_jobs WHERE postedAt >= ? ORDER BY postedAt DESC LIMIT ?`)
-      .all(since, limit) as ClientJobRow[]
+      .prepare(`SELECT * FROM gateway_jobs WHERE postedAt >= ? ORDER BY postedAt DESC LIMIT ?`)
+      .all(since, limit) as GatewayJobRow[]
   }
 
-  countClientByStatus(): Record<string, number> {
+  countGatewayByStatus(): Record<string, number> {
     const rows = this.db
-      .prepare(`SELECT status, COUNT(*) as n FROM client_jobs GROUP BY status`)
+      .prepare(`SELECT status, COUNT(*) as n FROM gateway_jobs GROUP BY status`)
       .all() as {status: string; n: number}[]
     return Object.fromEntries(rows.map(r => [r.status, r.n]))
   }
@@ -250,7 +250,7 @@ export class JobsDb {
   /** Total xBZZ spent across claimed client jobs. Sums actualPayment as bigint. */
   totalSpentXBZZ(): bigint {
     const rows = this.db
-      .prepare(`SELECT actualPayment FROM client_jobs WHERE actualPayment IS NOT NULL`)
+      .prepare(`SELECT actualPayment FROM gateway_jobs WHERE actualPayment IS NOT NULL`)
       .all() as {actualPayment: string}[]
     return rows.reduce((acc, r) => acc + BigInt(r.actualPayment), 0n)
   }
@@ -264,10 +264,10 @@ export class JobsDb {
   }
 
   /** Wipe stored prompts/responses older than `cutoffSeconds`. */
-  redactClientPayloadsBefore(cutoffSeconds: number): number {
+  redactGatewayPayloadsBefore(cutoffSeconds: number): number {
     const res = this.db
       .prepare(
-        `UPDATE client_jobs SET prompt = '[expired]', response = '[expired]' WHERE postedAt < ? AND (prompt IS NOT NULL OR response IS NOT NULL)`,
+        `UPDATE gateway_jobs SET prompt = '[expired]', response = '[expired]' WHERE postedAt < ? AND (prompt IS NOT NULL OR response IS NOT NULL)`,
       )
       .run(cutoffSeconds)
     return res.changes

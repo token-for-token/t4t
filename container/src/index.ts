@@ -2,7 +2,7 @@
 import {loadAdminConfig, loadConfig, type AdminConfig} from './lib/config'
 import {deactivateProvider, getProvider, makeChain, withdrawStake} from './lib/chain'
 import {logger} from './lib/logger'
-import {startClient} from './modes/client/index'
+import {startGateway} from './modes/gateway/index'
 import {startProvider} from './modes/provider/index'
 
 const USAGE = `t4t — Token4Token container
@@ -29,7 +29,7 @@ async function main() {
 
   const cfg = loadConfig()
   logger.info({mode: cfg.T4T_MODE, registry: cfg.REGISTRY_ADDRESS}, 't4t starting')
-  if (cfg.T4T_MODE === 'client') return startClient(cfg)
+  if (cfg.T4T_MODE === 'gateway') return startGateway(cfg)
   return startProvider(cfg)
 }
 

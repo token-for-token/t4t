@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest'
-import {ModelDiscovery} from '../src/modes/client/models'
+import {ModelDiscovery} from '../src/modes/gateway/models'
 import type {ChainClient} from '../src/lib/chain'
 import type {ModelOffering, ProviderRow} from '../src/lib/types'
 

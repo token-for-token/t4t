@@ -16,7 +16,7 @@ import {
 const ONBOARDING_TABS: NavTab[] = [{id: 'wallet', href: '/wallet', label: 'Wallet'}]
 
 export interface OnboardingDeps {
-  /** 'client' | 'provider' — only affects display copy. */
+  /** 'gateway' | 'provider' — only affects display copy. */
   role: string
   host: string
   port: number

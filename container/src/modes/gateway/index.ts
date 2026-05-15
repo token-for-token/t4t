@@ -1,7 +1,7 @@
 import {Bee} from '@ethersphere/bee-js'
 import {keccak256, toBytes, toHex} from 'viem'
 import {join} from 'node:path'
-import type {ClientConfig} from '../../lib/config'
+import type {GatewayConfig} from '../../lib/config'
 import {walletKeyFilePath} from '../../lib/config'
 import {startOnboardingServer, isZeroAddress} from '../../lib/onboarding'
 import {discoverUsableBatchId} from '../../lib/swarm'
@@ -29,8 +29,8 @@ import type {
 
 const PROTOCOL_VERSION = 1 as const
 
-export async function startClient(cfg: ClientConfig): Promise<void> {
-  const log = logger.child({mode: 'client'})
+export async function startGateway(cfg: GatewayConfig): Promise<void> {
+  const log = logger.child({mode: 'gateway'})
 
   // Onboarding-only mode covers two pre-flight states:
   //   1) no wallet yet → show create/import UI
@@ -41,7 +41,7 @@ export async function startClient(cfg: ClientConfig): Promise<void> {
     isZeroAddress(cfg.ESCROW_ADDRESS) ||
     isZeroAddress(cfg.XBZZ_ADDRESS)
   const onboardingBase = {
-    role: 'client' as const,
+    role: 'gateway' as const,
     host: cfg.T4T_ADMIN_HOST,
     port: cfg.T4T_ADMIN_PORT,
     walletFilePath: walletKeyFilePath(cfg.T4T_DATA_DIR),
@@ -99,7 +99,7 @@ export async function startClient(cfg: ClientConfig): Promise<void> {
   if (cfg.T4T_PERSIST_PAYLOADS) {
     setInterval(() => {
       const cutoff = Math.floor(Date.now() / 1000) - cfg.T4T_PAYLOAD_RETENTION_HOURS * 3600
-      const redacted = db.redactClientPayloadsBefore(cutoff)
+      const redacted = db.redactGatewayPayloadsBefore(cutoff)
       if (redacted > 0) log.info({redacted}, 'expired payloads redacted')
     }, 3600_000)
   }
@@ -137,7 +137,7 @@ export async function startClient(cfg: ClientConfig): Promise<void> {
   function persistFailureRow(routing: Hex, status: 'cancelled' | 'timed_out', errorMessage: string): void {
     const meta = jobMeta.get(routing)
     if (!meta) return
-    db.recordClientJob({
+    db.recordGatewayJob({
       jobId: routing,
       provider: meta.provider,
       modelId: meta.modelId,
@@ -223,7 +223,7 @@ export async function startClient(cfg: ClientConfig): Promise<void> {
         }
         const meta = jobMeta.get(body.jobId)
         if (meta) {
-          db.recordClientJob({
+          db.recordGatewayJob({
             jobId: body.jobId,
             provider: meta.provider,
             modelId: meta.modelId,
@@ -251,7 +251,7 @@ export async function startClient(cfg: ClientConfig): Promise<void> {
           const meta = jobMeta.get(body.jobId)
           if (meta) {
             const content = payload.openaiResponse.choices[0]?.message.content ?? ''
-            db.recordClientJob({
+            db.recordGatewayJob({
               jobId: body.jobId,
               provider: meta.provider,
               modelId: meta.modelId,
@@ -333,7 +333,7 @@ export async function startClient(cfg: ClientConfig): Promise<void> {
     const jobIdRouting = keccak256(toBytes('0x' + requestHash))
 
     const promptText = req.messages.map(m => `${m.role}: ${m.content}`).join('\n')
-    db.recordClientJob({
+    db.recordGatewayJob({
       jobId: jobIdRouting,
       provider: target.provider.owner,
       modelId: req.model,

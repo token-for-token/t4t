@@ -40,7 +40,7 @@ const DEFAULT_ESCROW_ADDRESS = '0x34Db8E014E71928f17E23eC1272B602582222c9c'
 const DEFAULT_XBZZ_ADDRESS = '0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da'
 
 const Common = z.object({
-  T4T_MODE: z.enum(['client', 'provider']),
+  T4T_MODE: z.enum(['gateway', 'provider']),
   BEE_API_URL: z.string().url(),
   GNOSIS_RPC_URL: z.string().url().default(DEFAULT_GNOSIS_RPC_URL),
   REGISTRY_ADDRESS: Address.default(DEFAULT_REGISTRY_ADDRESS as `0x${string}`),
@@ -67,8 +67,8 @@ const CsvList = z.string().transform(s =>
     .filter(Boolean),
 )
 
-const Client = Common.extend({
-  T4T_MODE: z.literal('client'),
+const Gateway = Common.extend({
+  T4T_MODE: z.literal('gateway'),
   T4T_SELECTION_STRATEGY: z.enum(['cheapest', 'top_rep_cheapest', 'manual']).default('top_rep_cheapest'),
   // Optional cap on (input + output) wei per 1M tokens — providers above this are skipped.
   T4T_MAX_PRICE_PER_MILLION_TOKENS: z.coerce.bigint().optional(),
@@ -106,22 +106,22 @@ const Admin = Common.omit({T4T_MODE: true, POSTAGE_BATCH_ID: true}).extend({
   POSTAGE_BATCH_ID: Common.shape.POSTAGE_BATCH_ID.optional(),
 })
 
-export type ClientConfig = z.infer<typeof Client> & {walletKey: `0x${string}` | null}
+export type GatewayConfig = z.infer<typeof Gateway> & {walletKey: `0x${string}` | null}
 export type ProviderConfig = z.infer<typeof Provider> & {walletKey: `0x${string}` | null}
 export type AdminConfig = z.infer<typeof Admin> & {walletKey: `0x${string}`}
-export type Config = ClientConfig | ProviderConfig
+export type Config = GatewayConfig | ProviderConfig
 
 export function loadConfig(): Config {
   const mode = process.env.T4T_MODE
-  if (mode === 'client') {
-    const parsed = Client.parse(process.env)
+  if (mode === 'gateway') {
+    const parsed = Gateway.parse(process.env)
     return {...parsed, walletKey: readKey(parsed.T4T_DATA_DIR)}
   }
   if (mode === 'provider') {
     const parsed = Provider.parse(process.env)
     return {...parsed, walletKey: readKey(parsed.T4T_DATA_DIR)}
   }
-  throw new Error(`T4T_MODE must be "client" or "provider" (got ${mode ?? 'unset'})`)
+  throw new Error(`T4T_MODE must be "gateway" or "provider" (got ${mode ?? 'unset'})`)
 }
 
 export function loadAdminConfig(): AdminConfig {

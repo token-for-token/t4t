@@ -1,5 +1,5 @@
 import {describe, expect, it} from 'vitest'
-import {isHeartbeatFresh} from '../src/modes/client/selector'
+import {isHeartbeatFresh} from '../src/modes/gateway/selector'
 
 describe('isHeartbeatFresh', () => {
   const NOW = 1_700_000_000

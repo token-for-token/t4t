@@ -29,7 +29,7 @@ export const PROVIDER_TABS: NavTab[] = [
 ]
 
 /** Default tab set for the client admin (includes "Providers" market view). */
-export const CLIENT_TABS: NavTab[] = [
+export const GATEWAY_TABS: NavTab[] = [
   {id: 'jobs', href: '/', label: 'Jobs'},
   {id: 'models', href: '/models', label: 'Models'},
   {id: 'providers', href: '/providers', label: 'Providers'},
@@ -42,13 +42,13 @@ export interface LayoutOpts {
   refreshSeconds: number
   body: string
   active: TabId
-  /** Tabs to render in the nav. Falls back to CLIENT_TABS for backwards
+  /** Tabs to render in the nav. Falls back to GATEWAY_TABS for backwards
    *  compatibility with callers that haven't been updated yet. */
   tabs?: NavTab[]
 }
 
 export function layout(opts: LayoutOpts): string {
-  const tabs = opts.tabs ?? CLIENT_TABS
+  const tabs = opts.tabs ?? GATEWAY_TABS
   const tab = (t: NavTab) =>
     `<a href="${t.href}" class="${opts.active === t.id ? 'active' : ''}">${escape(t.label)}</a>`
   return `<!doctype html>

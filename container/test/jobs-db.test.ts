@@ -103,7 +103,7 @@ describe('JobsDb provider lifecycle', () => {
 describe('JobsDb client lifecycle', () => {
   it('persists prompts only when explicitly stored', () => {
     const db = mkDb()
-    db.recordClientJob({
+    db.recordGatewayJob({
       jobId: '0xa',
       provider: '0xprov',
       modelId: 'm',
@@ -120,30 +120,30 @@ describe('JobsDb client lifecycle', () => {
       completionTokens: null,
       errorMessage: null,
     })
-    const r = db.listClientJobs({sinceSeconds: 0})[0]!
+    const r = db.listGatewayJobs({sinceSeconds: 0})[0]!
     expect(r.prompt).toBe('[redacted]')
     expect(r.response).toBeNull()
   })
 
-  it('redactClientPayloadsBefore replaces prompts past cutoff', () => {
+  it('redactGatewayPayloadsBefore replaces prompts past cutoff', () => {
     const db = mkDb()
-    db.recordClientJob({
+    db.recordGatewayJob({
       jobId: '0xa', provider: 'p', modelId: 'm', status: 'delivered',
       maxPayment: '1', actualPayment: null,
       postedAt: 100, ackedAt: null, deliveredAt: null, claimedAt: null,
       prompt: 'hi', response: 'hello',
       promptTokens: null, completionTokens: null, errorMessage: null,
     })
-    db.recordClientJob({
+    db.recordGatewayJob({
       jobId: '0xb', provider: 'p', modelId: 'm', status: 'delivered',
       maxPayment: '1', actualPayment: null,
       postedAt: 1000, ackedAt: null, deliveredAt: null, claimedAt: null,
       prompt: 'keep', response: 'me',
       promptTokens: null, completionTokens: null, errorMessage: null,
     })
-    const changed = db.redactClientPayloadsBefore(500)
+    const changed = db.redactGatewayPayloadsBefore(500)
     expect(changed).toBe(1)
-    const rows = db.listClientJobs({sinceSeconds: 0})
+    const rows = db.listGatewayJobs({sinceSeconds: 0})
     const old = rows.find(r => r.jobId === '0xa')!
     const fresh = rows.find(r => r.jobId === '0xb')!
     expect(old.prompt).toBe('[expired]')
@@ -152,14 +152,14 @@ describe('JobsDb client lifecycle', () => {
 
   it('sums total spent xBZZ', () => {
     const db = mkDb()
-    db.recordClientJob({
+    db.recordGatewayJob({
       jobId: '0x1', provider: 'p', modelId: 'm', status: 'claimed',
       maxPayment: '10', actualPayment: '7',
       postedAt: 1, ackedAt: null, deliveredAt: null, claimedAt: null,
       prompt: null, response: null,
       promptTokens: null, completionTokens: null, errorMessage: null,
     })
-    db.recordClientJob({
+    db.recordGatewayJob({
       jobId: '0x2', provider: 'p', modelId: 'm', status: 'claimed',
       maxPayment: '10', actualPayment: '5',
       postedAt: 1, ackedAt: null, deliveredAt: null, claimedAt: null,

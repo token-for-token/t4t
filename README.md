@@ -17,18 +17,18 @@ t4t/
 ├── container/           # TS: one image, two modes
 │   ├── src/
 │   │   ├── lib/         # envelope, swarm, chain, ollama, crypto, config
-│   │   ├── modes/client/
+│   │   ├── modes/gateway/
 │   │   └── modes/provider/
 │   ├── test/
 │   └── Dockerfile
 ├── docs/
 │   ├── spec.md
 │   ├── architecture.md
-│   ├── getting-started-client.md
+│   ├── getting-started-gateway.md
 │   └── getting-started-provider.md
 ├── website/             # t4t.eth landing page + live model directory
 ├── docker-compose.provider-example.yml   # provider + ollama (+ optional bee)
-├── docker-compose.client-example.yml     # client + open-webui (+ optional bee)
+├── docker-compose.gateway-example.yml    # gateway + open-webui (+ optional bee)
 └── Makefile
 ```
 
@@ -59,13 +59,13 @@ from `make test` so the default loop stays hermetic.
 
 1. Run Anvil forked from Gnosis: `make anvil`
 2. Deploy contracts: `make deploy-local` (writes addresses to console)
-3. Copy the relevant example (`docker-compose.provider-example.yml` or `docker-compose.client-example.yml`) → `docker-compose.yml`. Defaults work against the live Gnosis-mainnet deployment; the admin UI handles wallet onboarding on first boot.
+3. Copy the relevant example (`docker-compose.provider-example.yml` or `docker-compose.gateway-example.yml`) → `docker-compose.yml`. Defaults work against the live Gnosis-mainnet deployment; the admin UI handles wallet onboarding on first boot.
 4. `docker compose up bee ollama`
 5. Pull a model: `docker exec -it $(docker compose ps -q ollama) ollama pull llama3:8b`
-6. `docker compose up t4t-provider t4t-client`
+6. `docker compose up t4t-provider t4t-gateway`
 7. Point any OpenAI-compatible app at `http://localhost:8080/v1`
 
-See [docs/getting-started-client.md](docs/getting-started-client.md) and [docs/getting-started-provider.md](docs/getting-started-provider.md) for details.
+See [docs/getting-started-gateway.md](docs/getting-started-gateway.md) and [docs/getting-started-provider.md](docs/getting-started-provider.md) for details.
 
 ## Status
 

@@ -1,10 +1,10 @@
-# Getting started — client
+# Getting started — gateway
 
-You want to use T4T from any OpenAI-compatible app. Run the client container; point your app at `http://localhost:8080/v1`.
+You want to use T4T from any OpenAI-compatible app. Run the gateway container; point your app at `http://localhost:3000/v1`.
 
 ## 1. Prerequisites
 
-- A local Bee node (`bee` or run with the bundled `docker-compose.client-example.yml`).
+- A local Bee node (`bee` or run with the bundled `docker-compose.gateway-example.yml`).
 - A wallet with **xBZZ** (for payment) and a little **xDAI** (for gas) on Gnosis Chain.
 - A funded Swarm postage batch ID.
 - The deployed T4T contract addresses (registry, escrow, xBZZ).
@@ -38,7 +38,7 @@ Or directly:
 
 ```bash
 cd container
-T4T_MODE=client npm run dev
+T4T_MODE=gateway npm run dev
 ```
 
 ## 4. Use it
