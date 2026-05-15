@@ -1,0 +1,1290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>T4T — Design Language v0.1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700;800&family=Space+Mono:wght@400;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,700;1,6..72,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* ------- core palette ------- */
+    --bg:           #0a0a0a;          /* near-black, not pure */
+    --bg-elev:      #131313;          /* card surface */
+    --bg-deeper:    #050505;          /* pit / inset */
+    --ink:          #ededed;          /* primary text */
+    --ink-dim:      #8a8a8a;          /* secondary */
+    --ink-faint:    #4a4a4a;          /* tertiary, borders */
+    --line:         #222222;          /* hairlines */
+    --line-strong:  #333333;          /* strong hairlines */
+
+    /* ------- signal colors ------- */
+    --xbzz:         #ff5c00;          /* xBZZ orange — payment / value */
+    --xbzz-deep:    #c43d00;
+    --gnosis:       #04795b;          /* gnosis green — chain / settle */
+    --swarm:        #ffd400;          /* swarm yellow — storage / honey */
+    --slash:        #ff2d2d;          /* slashing / error / red queue */
+    --live:         #00ff9c;          /* live / inference active */
+
+    /* ------- type ------- */
+    --font-display: 'JetBrains Mono', ui-monospace, monospace;
+    --font-mono:    'Space Mono', ui-monospace, monospace;
+    --font-serif:   'Newsreader', Georgia, serif;
+
+    /* ------- geometry ------- */
+    --grid: 8px;
+    --radius: 0;                      /* brutalist: no rounding */
+    --hair: 1px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 64px 64px;
+    background-position: -1px -1px;
+    background-attachment: fixed;
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at top left, rgba(255,92,0,0.08), transparent 50%),
+      radial-gradient(ellipse at bottom right, rgba(4,121,91,0.06), transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* film grain overlay */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  }
+
+  main { position: relative; z-index: 2; }
+
+  /* ============== TOP RAIL ============== */
+  .rail {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg-deeper);
+    border-bottom: var(--hair) solid var(--line-strong);
+    padding: 10px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-dim);
+  }
+  .rail-left { display: flex; gap: 24px; align-items: center; }
+  .rail-mark { color: var(--ink); font-weight: 700; }
+  .rail-mark::before { content: "▮ "; color: var(--xbzz); }
+  .rail-right { display: flex; gap: 18px; }
+  .rail-right span { display: inline-flex; gap: 6px; align-items: center; }
+  .pulse {
+    display: inline-block; width: 6px; height: 6px; background: var(--live);
+    box-shadow: 0 0 8px var(--live);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ============== HERO ============== */
+  .hero {
+    padding: 96px 48px 64px;
+    border-bottom: var(--hair) solid var(--line-strong);
+    position: relative;
+    overflow: hidden;
+  }
+  .hero-tag {
+    display: inline-block;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--xbzz);
+    border: var(--hair) solid var(--xbzz);
+    padding: 4px 10px;
+    margin-bottom: 32px;
+  }
+  .hero h1 {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: clamp(48px, 9vw, 132px);
+    line-height: 0.92;
+    letter-spacing: -0.04em;
+    margin: 0 0 24px;
+    color: var(--ink);
+  }
+  .hero h1 .strike {
+    color: var(--xbzz);
+    position: relative;
+  }
+  .hero h1 .strike::after {
+    content: "";
+    position: absolute;
+    left: -4px; right: -4px;
+    top: 50%;
+    height: 6px;
+    background: var(--xbzz);
+    opacity: 0.15;
+    transform: translateY(-50%);
+  }
+  .hero-sub {
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-size: clamp(18px, 2vw, 24px);
+    line-height: 1.4;
+    color: var(--ink-dim);
+    max-width: 720px;
+    margin: 0 0 48px;
+  }
+  .hero-meta {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    border-top: var(--hair) solid var(--line-strong);
+    border-left: var(--hair) solid var(--line-strong);
+  }
+  .hero-meta div {
+    padding: 16px 20px;
+    border-right: var(--hair) solid var(--line-strong);
+    border-bottom: var(--hair) solid var(--line-strong);
+  }
+  .hero-meta dt {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 8px;
+  }
+  .hero-meta dd {
+    margin: 0;
+    font-size: 18px;
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  /* ============== SECTION SCAFFOLD ============== */
+  section.block {
+    padding: 80px 48px;
+    border-bottom: var(--hair) solid var(--line-strong);
+    position: relative;
+  }
+  .block-head {
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    gap: 32px;
+    margin-bottom: 48px;
+    align-items: baseline;
+  }
+  .block-num {
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 56px;
+    color: var(--xbzz);
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+  .block-title h2 {
+    font-family: var(--font-display);
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 8px;
+    color: var(--ink);
+  }
+  .block-title p {
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-size: 17px;
+    color: var(--ink-dim);
+    margin: 0;
+    max-width: 640px;
+  }
+  .block-body {
+    margin-left: 112px;
+  }
+  @media (max-width: 720px) {
+    .block-body { margin-left: 0; }
+    .block-head { grid-template-columns: 1fr; gap: 8px; }
+    .block-num { font-size: 40px; }
+    .hero { padding: 56px 24px 40px; }
+    section.block { padding: 56px 24px; }
+    .hero-meta { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  /* ============== PHILOSOPHY ============== */
+  .philosophy {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--line-strong);
+    border: var(--hair) solid var(--line-strong);
+  }
+  .principle {
+    background: var(--bg-elev);
+    padding: 28px;
+    position: relative;
+  }
+  .principle-num {
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0.15em;
+    margin-bottom: 16px;
+  }
+  .principle-h {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 700;
+    margin: 0 0 12px;
+    letter-spacing: -0.01em;
+  }
+  .principle p {
+    font-size: 13px;
+    color: var(--ink-dim);
+    margin: 0;
+    line-height: 1.6;
+  }
+  @media (max-width: 720px) {
+    .philosophy { grid-template-columns: 1fr; }
+  }
+
+  /* ============== COLOR SYSTEM ============== */
+  .swatch-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--line-strong);
+    border: var(--hair) solid var(--line-strong);
+  }
+  .swatch {
+    background: var(--bg-elev);
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .swatch-chip {
+    height: 120px;
+    border-bottom: var(--hair) solid var(--line-strong);
+    position: relative;
+  }
+  .swatch-meta {
+    padding: 16px;
+  }
+  .swatch-name {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 13px;
+    margin-bottom: 4px;
+  }
+  .swatch-hex {
+    font-size: 11px;
+    color: var(--ink-dim);
+    letter-spacing: 0.05em;
+  }
+  .swatch-role {
+    font-size: 10px;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-top: 8px;
+  }
+  @media (max-width: 720px) {
+    .swatch-grid { grid-template-columns: repeat(2, 1fr); }
+    .swatch-chip { height: 80px; }
+  }
+
+  /* ============== TYPOGRAPHY ============== */
+  .type-row {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 32px;
+    padding: 32px 0;
+    border-bottom: var(--hair) dashed var(--line);
+    align-items: baseline;
+  }
+  .type-row:last-child { border-bottom: none; }
+  .type-label {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .type-label small {
+    display: block;
+    margin-top: 4px;
+    color: var(--ink-dim);
+    font-size: 10px;
+    text-transform: none;
+    letter-spacing: 0.04em;
+  }
+  .type-display {
+    font-family: var(--font-display);
+    font-size: 72px;
+    font-weight: 800;
+    line-height: 0.95;
+    letter-spacing: -0.04em;
+  }
+  .type-h1 { font-family: var(--font-display); font-size: 36px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
+  .type-body { font-family: var(--font-mono); font-size: 14px; line-height: 1.6; color: var(--ink-dim); }
+  .type-mono { font-family: var(--font-mono); font-size: 13px; }
+  .type-serif { font-family: var(--font-serif); font-style: italic; font-size: 20px; line-height: 1.5; color: var(--ink-dim); }
+  @media (max-width: 720px) {
+    .type-row { grid-template-columns: 1fr; gap: 8px; padding: 20px 0; }
+    .type-display { font-size: 48px; }
+    .type-h1 { font-size: 28px; }
+  }
+
+  /* ============== COMPONENT PATTERNS ============== */
+  .pattern-stack {
+    display: grid;
+    gap: 32px;
+  }
+  .pattern {
+    background: var(--bg-elev);
+    border: var(--hair) solid var(--line-strong);
+    padding: 0;
+  }
+  .pattern-head {
+    padding: 12px 16px;
+    border-bottom: var(--hair) solid var(--line-strong);
+    background: var(--bg-deeper);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--ink-dim);
+  }
+  .pattern-head .dots {
+    display: flex; gap: 6px;
+  }
+  .pattern-head .dot {
+    width: 8px; height: 8px; background: var(--ink-faint);
+  }
+  .pattern-body {
+    padding: 32px;
+  }
+
+  /* button library */
+  .btn {
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 12px 20px;
+    border: var(--hair) solid var(--ink);
+    background: transparent;
+    color: var(--ink);
+    cursor: pointer;
+    transition: all 80ms linear;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+  }
+  .btn:hover {
+    background: var(--ink);
+    color: var(--bg);
+  }
+  .btn-primary {
+    background: var(--xbzz);
+    border-color: var(--xbzz);
+    color: #0a0a0a;
+  }
+  .btn-primary:hover {
+    background: #ff7424;
+    border-color: #ff7424;
+    color: #0a0a0a;
+  }
+  .btn-ghost {
+    border-color: var(--line-strong);
+    color: var(--ink-dim);
+  }
+  .btn-ghost:hover {
+    border-color: var(--ink);
+    background: transparent;
+    color: var(--ink);
+  }
+  .btn-danger { border-color: var(--slash); color: var(--slash); }
+  .btn-danger:hover { background: var(--slash); color: var(--bg); }
+
+  .btn-group { display: flex; flex-wrap: wrap; gap: 12px; }
+
+  /* terminal / code */
+  .terminal {
+    background: var(--bg-deeper);
+    border: var(--hair) solid var(--line-strong);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--ink);
+  }
+  .terminal-head {
+    padding: 8px 14px;
+    border-bottom: var(--hair) solid var(--line-strong);
+    font-size: 11px;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .terminal-body { padding: 16px 20px; }
+  .terminal .prompt { color: var(--xbzz); }
+  .terminal .cmd { color: var(--ink); }
+  .terminal .out { color: var(--ink-dim); }
+  .terminal .ok { color: var(--live); }
+  .terminal .warn { color: var(--swarm); }
+  .terminal .err { color: var(--slash); }
+  .cursor {
+    display: inline-block;
+    width: 8px;
+    height: 14px;
+    background: var(--ink);
+    vertical-align: text-bottom;
+    margin-left: 2px;
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* hash address */
+  .hash {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-dim);
+    word-break: break-all;
+  }
+  .hash .hash-prefix { color: var(--xbzz); }
+  .hash .hash-mid { color: var(--ink-faint); }
+  .hash .hash-suffix { color: var(--ink); }
+
+  /* status badges */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-display);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 4px 8px;
+    border: var(--hair) solid;
+  }
+  .badge::before {
+    content: "";
+    width: 6px; height: 6px;
+    background: currentColor;
+  }
+  .badge-live { color: var(--live); border-color: var(--live); }
+  .badge-pending { color: var(--swarm); border-color: var(--swarm); }
+  .badge-slashed { color: var(--slash); border-color: var(--slash); }
+  .badge-settled { color: var(--gnosis); border-color: var(--gnosis); }
+  .badge-row { display: flex; flex-wrap: wrap; gap: 10px; }
+
+  /* job card — flagship component */
+  .job-card {
+    background: var(--bg-elev);
+    border: var(--hair) solid var(--line-strong);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background-color: var(--line-strong);
+  }
+  .job-card > div {
+    background: var(--bg-elev);
+    padding: 20px;
+  }
+  .job-card .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--ink-faint);
+    margin-bottom: 8px;
+  }
+  .job-card .value {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  .job-card .value .unit {
+    color: var(--ink-faint);
+    font-weight: 400;
+    font-size: 13px;
+    margin-left: 4px;
+  }
+  .job-card-head {
+    grid-column: 1 / -1;
+    display: flex !important;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: var(--hair) solid var(--line-strong);
+  }
+  .job-id {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--ink);
+  }
+  .job-id .pre { color: var(--ink-faint); }
+
+  /* token tag */
+  .token {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 13px;
+    padding: 4px 10px;
+    background: var(--bg-deeper);
+    border: var(--hair) solid var(--xbzz);
+    color: var(--xbzz);
+  }
+  .token::before {
+    content: "◆";
+    font-size: 10px;
+  }
+
+  /* ============== ICONOGRAPHY ============== */
+  .icon-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 1px;
+    background: var(--line-strong);
+    border: var(--hair) solid var(--line-strong);
+  }
+  .icon-cell {
+    background: var(--bg-elev);
+    aspect-ratio: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 16px;
+  }
+  .icon-cell svg {
+    width: 32px; height: 32px;
+    stroke: var(--ink);
+    fill: none;
+    stroke-width: 1.5;
+  }
+  .icon-cell span {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--ink-faint);
+  }
+  @media (max-width: 720px) {
+    .icon-grid { grid-template-columns: repeat(3, 1fr); }
+  }
+
+  /* ============== ARCHITECTURE DIAGRAM ============== */
+  .arch {
+    background: var(--bg-elev);
+    border: var(--hair) solid var(--line-strong);
+    padding: 40px;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 24px;
+    align-items: stretch;
+  }
+  .arch-node {
+    border: var(--hair) solid var(--line-strong);
+    background: var(--bg-deeper);
+    padding: 20px;
+    text-align: center;
+    position: relative;
+  }
+  .arch-node .role {
+    font-size: 10px;
+    color: var(--ink-faint);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .arch-node .name {
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .arch-node .detail {
+    font-size: 11px;
+    color: var(--ink-dim);
+  }
+  .arch-flow {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    min-width: 140px;
+  }
+  .arch-arrow {
+    width: 100%;
+    height: 1px;
+    background: var(--xbzz);
+    position: relative;
+  }
+  .arch-arrow::after {
+    content: "";
+    position: absolute;
+    right: -1px; top: 50%;
+    transform: translateY(-50%);
+    border-left: 6px solid var(--xbzz);
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+  }
+  .arch-arrow .lbl {
+    position: absolute;
+    top: -18px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 10px;
+    color: var(--xbzz);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .arch-arrow.reverse { background: var(--gnosis); }
+  .arch-arrow.reverse::after {
+    border-left: none;
+    border-right: 6px solid var(--gnosis);
+    left: -1px; right: auto;
+  }
+  .arch-arrow.reverse .lbl { color: var(--gnosis); }
+  @media (max-width: 720px) {
+    .arch { grid-template-columns: 1fr; }
+    .arch-flow { transform: rotate(90deg); margin: 16px 0; }
+  }
+
+  /* ============== TICKER ============== */
+  .ticker {
+    background: var(--bg-deeper);
+    border-top: var(--hair) solid var(--line-strong);
+    border-bottom: var(--hair) solid var(--line-strong);
+    overflow: hidden;
+    padding: 12px 0;
+  }
+  .ticker-track {
+    display: flex;
+    gap: 48px;
+    animation: scroll 40s linear infinite;
+    white-space: nowrap;
+    font-family: var(--font-display);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .ticker-item { display: inline-flex; gap: 10px; align-items: center; }
+  .ticker-item .v { color: var(--xbzz); }
+  .ticker-item .sep { color: var(--ink-faint); }
+  @keyframes scroll {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-50%); }
+  }
+
+  /* ============== DO/DONT ============== */
+  .rules {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--line-strong);
+    border: var(--hair) solid var(--line-strong);
+  }
+  .rules > div { background: var(--bg-elev); padding: 24px; }
+  .rules h4 {
+    font-family: var(--font-display);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin: 0 0 16px;
+  }
+  .rules .do h4 { color: var(--live); }
+  .rules .dont h4 { color: var(--slash); }
+  .rules ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-size: 13px;
+    color: var(--ink-dim);
+    line-height: 1.7;
+  }
+  .rules li {
+    padding: 6px 0 6px 20px;
+    position: relative;
+    border-bottom: var(--hair) dashed var(--line);
+  }
+  .rules li:last-child { border-bottom: none; }
+  .rules .do li::before { content: "+"; color: var(--live); position: absolute; left: 0; font-weight: 700; }
+  .rules .dont li::before { content: "×"; color: var(--slash); position: absolute; left: 0; font-weight: 700; }
+  @media (max-width: 720px) {
+    .rules { grid-template-columns: 1fr; }
+  }
+
+  /* ============== FOOTER ============== */
+  footer {
+    padding: 48px;
+    border-top: var(--hair) solid var(--line-strong);
+    background: var(--bg-deeper);
+    display: flex;
+    justify-content: space-between;
+    align-items: end;
+    flex-wrap: wrap;
+    gap: 24px;
+  }
+  footer .sig {
+    font-family: var(--font-display);
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  footer .big {
+    font-family: var(--font-display);
+    font-size: 72px;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--xbzz);
+    letter-spacing: -0.04em;
+  }
+  @media (max-width: 720px) {
+    footer { padding: 32px 24px; }
+    footer .big { font-size: 48px; }
+  }
+
+  /* utility */
+  code.inline {
+    background: var(--bg-deeper);
+    padding: 2px 6px;
+    border: var(--hair) solid var(--line);
+    font-size: 12px;
+    color: var(--xbzz);
+  }
+  p.lede {
+    font-family: var(--font-serif);
+    font-size: 18px;
+    line-height: 1.6;
+    color: var(--ink-dim);
+    max-width: 720px;
+    margin: 0 0 24px;
+  }
+  p { color: var(--ink-dim); }
+
+</style>
+</head>
+<body>
+<main>
+
+  <!-- ============== TOP RAIL ============== -->
+  <div class="rail">
+    <div class="rail-left">
+      <span class="rail-mark">T4T // DESIGN.LANG</span>
+      <span>v0.1.0</span>
+      <span>token4token</span>
+    </div>
+    <div class="rail-right">
+      <span><span class="pulse"></span>NETWORK LIVE</span>
+      <span>BLOCK 38,492,118</span>
+      <span>xBZZ 0.00231</span>
+    </div>
+  </div>
+
+  <!-- ============== HERO ============== -->
+  <section class="hero">
+    <span class="hero-tag">DESIGN LANGUAGE / V0.1 / FOR T4T.ETH</span>
+    <h1>
+      INFERENCE<br/>
+      IS A <span class="strike">COMMODITY</span>.<br/>
+      PRICE IT.
+    </h1>
+    <p class="hero-sub">
+      A visual system for a protocol that pays GPUs in xBZZ, settles on Gnosis, and stores every byte on Swarm. Designed to look like infrastructure — because it <em>is</em>.
+    </p>
+    <dl class="hero-meta">
+      <div><dt>SUBSTRATE</dt><dd>Gnosis + Swarm</dd></div>
+      <div><dt>UNIT</dt><dd>xBZZ / token</dd></div>
+      <div><dt>SURFACE</dt><dd>t4t.eth</dd></div>
+      <div><dt>POSTURE</dt><dd>Brutalist</dd></div>
+    </dl>
+  </section>
+
+  <!-- ============== TICKER ============== -->
+  <div class="ticker">
+    <div class="ticker-track">
+      <span class="ticker-item">JOB <span class="v">0xa9f3…2b1c</span> SETTLED <span class="v">0.0042 xBZZ</span></span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">PROVIDER <span class="v">gpu-04.t4t.eth</span> ONLINE</span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">MODEL <span class="v">llama3:8b</span> 14 PROVIDERS</span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">SWARM CHUNK <span class="v">0x7e21…</span> PINNED</span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">ESCROW <span class="v">128.3 xBZZ</span> LOCKED</span>
+      <span class="ticker-item sep">//</span>
+      <!-- duplicated for seamless loop -->
+      <span class="ticker-item">JOB <span class="v">0xa9f3…2b1c</span> SETTLED <span class="v">0.0042 xBZZ</span></span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">PROVIDER <span class="v">gpu-04.t4t.eth</span> ONLINE</span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">MODEL <span class="v">llama3:8b</span> 14 PROVIDERS</span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">SWARM CHUNK <span class="v">0x7e21…</span> PINNED</span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">ESCROW <span class="v">128.3 xBZZ</span> LOCKED</span>
+      <span class="ticker-item sep">//</span>
+    </div>
+  </div>
+
+  <!-- ============== 01 PHILOSOPHY ============== -->
+  <section class="block">
+    <div class="block-head">
+      <div class="block-num">01</div>
+      <div class="block-title">
+        <h2>FIRST PRINCIPLES</h2>
+        <p>The protocol is honest. The interface should be too. No gradient marketing, no hero illustrations of glowing brains, no "AI for humanity."</p>
+      </div>
+    </div>
+    <div class="block-body">
+      <div class="philosophy">
+        <div class="principle">
+          <div class="principle-num">001</div>
+          <div class="principle-h">Show the wire.</div>
+          <p>Hashes, addresses, gas, latency, escrow balances — surface them. The user is technical. Hiding the machinery insults them.</p>
+        </div>
+        <div class="principle">
+          <div class="principle-num">002</div>
+          <div class="principle-h">No decoration.</div>
+          <p>Every line, badge, and color must encode signal. Hairlines separate domains. Orange means value moving. Green means settled.</p>
+        </div>
+        <div class="principle">
+          <div class="principle-num">003</div>
+          <div class="principle-h">Grid, not page.</div>
+          <p>The layout reads as a terminal log, a contract, or an order book — not a marketing site. Dense, monospaced, scrollable.</p>
+        </div>
+        <div class="principle">
+          <div class="principle-num">004</div>
+          <div class="principle-h">Pay attention to the dot.</div>
+          <p>Small status indicators — pulses, blink-cursors, single-pixel separators — carry the mood. Brutalism is about restraint, not noise.</p>
+        </div>
+        <div class="principle">
+          <div class="principle-num">005</div>
+          <div class="principle-h">Italic is the human.</div>
+          <p>Mono is the machine voice. Newsreader italic is the editorial human voice — used only for prose. The contrast is the system.</p>
+        </div>
+        <div class="principle">
+          <div class="principle-num">006</div>
+          <div class="principle-h">Black is a color.</div>
+          <p>The background is <code class="inline">#0a0a0a</code> — not pure black. Pure black is flat. T4T's black has weight. So does the type.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== 02 PALETTE ============== -->
+  <section class="block">
+    <div class="block-head">
+      <div class="block-num">02</div>
+      <div class="block-title">
+        <h2>SIGNAL PALETTE</h2>
+        <p>Colors are reserved for state. Six accents, each tied to a concept in the protocol. Use sparingly. If everything is orange, nothing is.</p>
+      </div>
+    </div>
+    <div class="block-body">
+      <div class="swatch-grid">
+        <div class="swatch">
+          <div class="swatch-chip" style="background:#ff5c00"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">xBZZ / Value</div>
+            <div class="swatch-hex">#FF5C00</div>
+            <div class="swatch-role">Payment · Primary CTA · Active</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-chip" style="background:#04795b"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Gnosis / Settle</div>
+            <div class="swatch-hex">#04795B</div>
+            <div class="swatch-role">Confirmed · Chain · Success</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-chip" style="background:#ffd400"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Swarm / Storage</div>
+            <div class="swatch-hex">#FFD400</div>
+            <div class="swatch-role">Pinned · Pending · Honey</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-chip" style="background:#00ff9c"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Live / Inference</div>
+            <div class="swatch-hex">#00FF9C</div>
+            <div class="swatch-role">Online · Streaming · Heartbeat</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-chip" style="background:#ff2d2d"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Slash / Error</div>
+            <div class="swatch-hex">#FF2D2D</div>
+            <div class="swatch-role">Slashing · Fault · Destructive</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-chip" style="background:#0a0a0a; border-right: 1px solid #222"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Pit Black</div>
+            <div class="swatch-hex">#0A0A0A</div>
+            <div class="swatch-role">Canvas · Background base</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-chip" style="background:#ededed"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Wire White</div>
+            <div class="swatch-hex">#EDEDED</div>
+            <div class="swatch-role">Primary text · High contrast</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-chip" style="background:#8a8a8a"></div>
+          <div class="swatch-meta">
+            <div class="swatch-name">Fog Grey</div>
+            <div class="swatch-hex">#8A8A8A</div>
+            <div class="swatch-role">Secondary text · Metadata</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== 03 TYPOGRAPHY ============== -->
+  <section class="block">
+    <div class="block-head">
+      <div class="block-num">03</div>
+      <div class="block-title">
+        <h2>TYPE SYSTEM</h2>
+        <p>Three voices: <em>Display Mono</em> for product (JetBrains Mono), <em>Wire Mono</em> for data (Space Mono), <em>Editorial Italic</em> for prose (Newsreader). Never serif sans. Never Inter.</p>
+      </div>
+    </div>
+    <div class="block-body">
+      <div class="type-row">
+        <div class="type-label">DISPLAY<small>JetBrains Mono 800<br>letter-spacing -0.04em</small></div>
+        <div class="type-display">T4T</div>
+      </div>
+      <div class="type-row">
+        <div class="type-label">HEADLINE<small>JetBrains Mono 700<br>32–56px</small></div>
+        <div class="type-h1">PAY-PER-TOKEN INFERENCE.</div>
+      </div>
+      <div class="type-row">
+        <div class="type-label">EDITORIAL<small>Newsreader Italic<br>18–24px, lede only</small></div>
+        <div class="type-serif">A marketplace where GPUs bid for prompts, and proofs live forever on Swarm.</div>
+      </div>
+      <div class="type-row">
+        <div class="type-label">BODY<small>Space Mono 400<br>13–14px / 1.6</small></div>
+        <div class="type-body">Clients pay providers in xBZZ to run inference on locally-hosted Ollama models. Requests and responses are stored on Swarm, addressed by hash. Job coordination happens via Swarm PSS.</div>
+      </div>
+      <div class="type-row">
+        <div class="type-label">DATA<small>Space Mono 400<br>12–13px, hashes &amp; numbers</small></div>
+        <div class="type-mono">0xa9f3c811…2b1c &nbsp;·&nbsp; 0.00231 xBZZ &nbsp;·&nbsp; block 38492118</div>
+      </div>
+      <div class="type-row">
+        <div class="type-label">LABEL<small>JetBrains Mono 700<br>10–11px uppercase, +0.12em tracking</small></div>
+        <div style="font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--xbzz);">PROVIDER · ESCROW · CLAIM</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== 04 COMPONENTS ============== -->
+  <section class="block">
+    <div class="block-head">
+      <div class="block-num">04</div>
+      <div class="block-title">
+        <h2>COMPONENTS</h2>
+        <p>Sharp corners. Hairline borders. No shadows. No gradients on surfaces. Every component looks like it could be rendered in a terminal.</p>
+      </div>
+    </div>
+    <div class="block-body">
+      <div class="pattern-stack">
+
+        <!-- Buttons -->
+        <div class="pattern">
+          <div class="pattern-head">
+            <span>buttons.tsx</span>
+            <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+          </div>
+          <div class="pattern-body">
+            <div class="btn-group">
+              <a class="btn btn-primary" href="#">RUN INFERENCE →</a>
+              <a class="btn" href="#">VIEW CONTRACT</a>
+              <a class="btn btn-ghost" href="#">DOCS</a>
+              <a class="btn btn-danger" href="#">SLASH PROVIDER</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Badges -->
+        <div class="pattern">
+          <div class="pattern-head">
+            <span>status-badge.tsx</span>
+            <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+          </div>
+          <div class="pattern-body">
+            <div class="badge-row">
+              <span class="badge badge-live">LIVE</span>
+              <span class="badge badge-pending">PENDING</span>
+              <span class="badge badge-settled">SETTLED</span>
+              <span class="badge badge-slashed">SLASHED</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Job card -->
+        <div class="pattern">
+          <div class="pattern-head">
+            <span>job-card.tsx — flagship component</span>
+            <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+          </div>
+          <div class="pattern-body">
+            <div class="job-card">
+              <div class="job-card-head">
+                <span class="job-id"><span class="pre">JOB </span>0xa9f3c811b4d72e1f…2b1c</span>
+                <span class="badge badge-live">STREAMING</span>
+              </div>
+              <div>
+                <div class="label">MODEL</div>
+                <div class="value">llama3:8b</div>
+              </div>
+              <div>
+                <div class="label">PROVIDER</div>
+                <div class="value">gpu-04.t4t.eth</div>
+              </div>
+              <div>
+                <div class="label">TOKENS / SECOND</div>
+                <div class="value">42.7<span class="unit">tok/s</span></div>
+              </div>
+              <div>
+                <div class="label">ESCROW</div>
+                <div class="value">0.0042<span class="unit">xBZZ</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Hash + token -->
+        <div class="pattern">
+          <div class="pattern-head">
+            <span>hash &amp; token primitives</span>
+            <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+          </div>
+          <div class="pattern-body">
+            <div style="margin-bottom: 16px;">
+              <div style="font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px;">SWARM REFERENCE</div>
+              <div class="hash"><span class="hash-prefix">0xa9f3c811</span><span class="hash-mid">b4d72e1f9c0a3b8e5d6f7028</span><span class="hash-suffix">2b1c</span></div>
+            </div>
+            <div>
+              <div style="font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px;">VALUE</div>
+              <span class="token">0.0042 xBZZ</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Terminal -->
+        <div class="pattern">
+          <div class="pattern-head">
+            <span>terminal.tsx — code &amp; CLI</span>
+            <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+          </div>
+          <div class="pattern-body" style="padding: 0;">
+            <div class="terminal" style="border: none;">
+              <div class="terminal-head">~/t4t — provider mode</div>
+              <div class="terminal-body">
+<span class="prompt">$</span> <span class="cmd">docker compose up t4t-provider</span><br>
+<span class="out">→ loading config from ./config.yml</span><br>
+<span class="out">→ connecting to bee node at localhost:1633</span> <span class="ok">[ok]</span><br>
+<span class="out">→ registering with ProviderRegistry at gnosis:0x7e21…</span> <span class="ok">[ok]</span><br>
+<span class="out">→ stake locked: <span style="color:var(--xbzz)">10.0 xBZZ</span></span> <span class="ok">[ok]</span><br>
+<span class="out">→ ollama: llama3:8b, mistral:7b ready</span> <span class="warn">[2 models]</span><br>
+<span class="out">→ listening for jobs via PSS topic 0xa9f3…</span><br>
+<span class="prompt">$</span> <span class="cursor"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== 05 ICONOGRAPHY ============== -->
+  <section class="block">
+    <div class="block-head">
+      <div class="block-num">05</div>
+      <div class="block-title">
+        <h2>ICONOGRAPHY</h2>
+        <p>Single-weight stroke icons. 1.5px lines, sharp joins, no fills. Drawn on a 24px grid. They look like wiring diagrams — because they describe one.</p>
+      </div>
+    </div>
+    <div class="block-body">
+      <div class="icon-grid">
+        <div class="icon-cell">
+          <svg viewBox="0 0 32 32"><rect x="4" y="4" width="24" height="24"/><path d="M4 12h24M12 4v24"/></svg>
+          <span>SWARM</span>
+        </div>
+        <div class="icon-cell">
+          <svg viewBox="0 0 32 32"><polygon points="16,4 28,12 28,24 16,32 4,24 4,12"/><circle cx="16" cy="18" r="3"/></svg>
+          <span>GNOSIS</span>
+        </div>
+        <div class="icon-cell">
+          <svg viewBox="0 0 32 32"><path d="M6 6l20 20M6 26L26 6"/><circle cx="16" cy="16" r="10"/></svg>
+          <span>JOB</span>
+        </div>
+        <div class="icon-cell">
+          <svg viewBox="0 0 32 32"><rect x="6" y="10" width="20" height="16"/><path d="M10 10V6h12v4M14 18h4"/></svg>
+          <span>ESCROW</span>
+        </div>
+        <div class="icon-cell">
+          <svg viewBox="0 0 32 32"><path d="M4 16h10l3-8 3 16 3-8h5"/></svg>
+          <span>INFERENCE</span>
+        </div>
+        <div class="icon-cell">
+          <svg viewBox="0 0 32 32"><circle cx="10" cy="10" r="4"/><circle cx="22" cy="22" r="4"/><path d="M13 13l6 6"/></svg>
+          <span>PROVIDER</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== 06 ARCHITECTURE ============== -->
+  <section class="block">
+    <div class="block-head">
+      <div class="block-num">06</div>
+      <div class="block-title">
+        <h2>SYSTEM DIAGRAM PATTERN</h2>
+        <p>When showing protocol flows, render them as wire diagrams: nodes are boxes, arrows are colored by domain. Orange = value, green = settlement, white = data.</p>
+      </div>
+    </div>
+    <div class="block-body">
+      <div class="arch">
+        <div class="arch-node">
+          <div class="role">CLIENT</div>
+          <div class="name">Gateway</div>
+          <div class="detail">OpenAI-compatible<br>localhost:8080</div>
+        </div>
+        <div class="arch-flow">
+          <div class="arch-arrow"><span class="lbl">PROMPT + xBZZ</span></div>
+          <div style="height: 24px"></div>
+          <div class="arch-arrow reverse"><span class="lbl">TOKENS</span></div>
+        </div>
+        <div class="arch-node">
+          <div class="role">PROVIDER</div>
+          <div class="name">gpu-04.t4t.eth</div>
+          <div class="detail">Ollama · llama3:8b<br>10 xBZZ staked</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== 07 DO / DONT ============== -->
+  <section class="block">
+    <div class="block-head">
+      <div class="block-num">07</div>
+      <div class="block-title">
+        <h2>RULES OF ENGAGEMENT</h2>
+        <p>The aesthetic dies fast if it drifts. These are the guardrails.</p>
+      </div>
+    </div>
+    <div class="block-body">
+      <div class="rules">
+        <div class="do">
+          <h4>DO</h4>
+          <ul>
+            <li>Use orange only for value moving (CTAs, xBZZ, payment).</li>
+            <li>Show real hashes, truncated middle: <code class="inline">0xa9f3…2b1c</code>.</li>
+            <li>Lead with mono. Switch to italic Newsreader for prose only.</li>
+            <li>Keep all corners sharp. <code class="inline">border-radius: 0</code>.</li>
+            <li>Use 1px hairlines to separate domains, not boxes-in-boxes.</li>
+            <li>Pulse the live dot. It's the only ambient animation.</li>
+          </ul>
+        </div>
+        <div class="dont">
+          <h4>DON'T</h4>
+          <ul>
+            <li>No purple gradients. No glassmorphism. No blob shapes.</li>
+            <li>No stock illustrations of robots, brains, or networks.</li>
+            <li>Never use Inter, Roboto, or any humanist sans.</li>
+            <li>No drop shadows. Depth comes from hairlines and layering.</li>
+            <li>Don't soften technical truths. Show gas, stake, slashing.</li>
+            <li>Avoid more than three accent colors on one screen.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== 08 LANDING PAGE APPLICATION ============== -->
+  <section class="block">
+    <div class="block-head">
+      <div class="block-num">08</div>
+      <div class="block-title">
+        <h2>APPLIED — t4t.eth LAYOUT</h2>
+        <p>How the system composes on the actual landing page. Five horizontal bands, separated by hairlines, scrolling like a printout.</p>
+      </div>
+    </div>
+    <div class="block-body">
+      <div style="background: var(--bg-elev); border: var(--hair) solid var(--line-strong); padding: 24px; font-family: var(--font-mono); font-size: 12px; line-height: 1.9; color: var(--ink-dim);">
+<span style="color: var(--xbzz)">┌─ BAND 1 ─</span> sticky rail · network status, block height, xBZZ price<br>
+<span style="color: var(--xbzz)">├─ BAND 2 ─</span> hero · headline + sub + meta-grid (4 cells)<br>
+<span style="color: var(--xbzz)">├─ BAND 3 ─</span> live ticker · scrolling jobs settling in real time<br>
+<span style="color: var(--xbzz)">├─ BAND 4 ─</span> protocol explainer · 3-step wire diagram (client → provider → settle)<br>
+<span style="color: var(--xbzz)">├─ BAND 5 ─</span> model directory · live table of providers, models, stake, tok/s, price<br>
+<span style="color: var(--xbzz)">├─ BAND 6 ─</span> getting started · two terminals side-by-side (gateway / provider)<br>
+<span style="color: var(--xbzz)">├─ BAND 7 ─</span> contracts · addresses on Gnosis, link to repo, link to spec.md<br>
+<span style="color: var(--xbzz)">└─ BAND 8 ─</span> footer · ENS + GitHub + xBZZ tip jar + license
+      </div>
+    </div>
+  </section>
+
+  <!-- ============== FOOTER ============== -->
+  <footer>
+    <div>
+      <div class="sig">T4T DESIGN LANGUAGE</div>
+      <div class="sig" style="margin-top: 6px; color: var(--ink-dim)">v0.1.0 · pin this hash before you ship</div>
+    </div>
+    <div class="big">t4t.eth</div>
+  </footer>
+
+</main>
+</body>
+</html>
