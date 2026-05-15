@@ -292,7 +292,7 @@ ${errBanner}
     <span class="mono">ProviderRegistry.MIN_STAKE</span> requires
     <strong>${escape(formatBzz(required))} BZZ</strong> as the initial stake.</p>
   <p>Send at least <strong>${escape(formatBzz(missing))} BZZ</strong> on Gnosis Chain to:</p>
-  <pre class="mono" style="background:#f5f5f5;padding:10px;border-radius:4px;overflow:auto">${escape(deps.existingAddress ?? '')}</pre>
+  <pre class="mono">${escape(deps.existingAddress ?? '')}</pre>
   <p class="muted">The container polls this balance every 10s. As soon as it reaches the
     threshold, the ${escape(deps.role)} auto-restarts into the normal jobs/status view &mdash; no manual
     intervention required.</p>
@@ -315,7 +315,7 @@ ${errBanner}
   <h3>Buy via Bee API</h3>
   <p class="muted">Replace <span class="mono">10000000</span> and <span class="mono">20</span> with your
     desired amount (per-chunk price &times; blocks) and depth (17&ndash;22). Larger depth = larger batch.</p>
-  <pre class="mono" style="background:#f5f5f5;padding:10px;border-radius:4px;overflow:auto">curl -X POST "${escape(beeUrl)}/stamps/10000000/20"</pre>
+  <pre class="mono">curl -X POST "${escape(beeUrl)}/stamps/10000000/20"</pre>
   <p class="muted">Buying a batch costs xBZZ from the Bee node's own wallet (not this ${escape(deps.role)}'s
     wallet). See the
     <a href="https://docs.ethswarm.org/docs/develop/access-the-swarm/keep-your-data-alive">Bee docs</a>

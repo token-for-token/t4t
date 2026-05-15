@@ -3,75 +3,159 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Token4Token — decentralized AI inference on Gnosis + Swarm</title>
+  <title>Token4Token — pay-per-token inference on Gnosis + Swarm</title>
   <meta name="description" content="Token4Token (T4T) is a decentralized AI inference marketplace. Clients pay providers in xBZZ to run inference on locally-hosted models, with payment escrowed on Gnosis Chain and traffic routed over Ethereum Swarm.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header>
-    <div class="container">
-      <h1>Token4Token</h1>
-      <p class="tagline">Decentralized AI inference marketplace on Gnosis Chain and Ethereum Swarm.</p>
-    </div>
-  </header>
+<main>
 
-  <main class="container">
-    <section>
-      <h2>How it works</h2>
+  <div class="rail">
+    <div class="rail-left">
+      <span class="rail-mark">T4T // TOKEN4TOKEN</span>
+      <span>v0.1</span>
+      <span>t4t.eth</span>
+    </div>
+    <div class="rail-right">
+      <span><span class="pulse"></span>NETWORK LIVE</span>
+      <span>GNOSIS · CHAIN 100</span>
+      <span>SWARM</span>
+    </div>
+  </div>
+
+  <section class="hero">
+    <span class="hero-tag">PAY-PER-TOKEN INFERENCE / NO API KEY</span>
+    <h1>
+      INFERENCE<br/>
+      IS A <span class="strike">COMMODITY</span>.<br/>
+      PRICE IT.
+    </h1>
+    <p class="hero-sub">
+      A marketplace where GPUs bid for prompts. Clients pay providers in xBZZ, payment escrows on Gnosis, and every byte routes over Swarm. No middleman, no rate limit, no key.
+    </p>
+    <dl class="hero-meta">
+      <div><dt>SUBSTRATE</dt><dd>Gnosis + Swarm</dd></div>
+      <div><dt>UNIT</dt><dd>xBZZ / token</dd></div>
+      <div><dt>SURFACE</dt><dd>t4t.eth</dd></div>
+      <div><dt>STATUS</dt><dd>v0.1 · live</dd></div>
+    </dl>
+  </section>
+
+  <div class="ticker">
+    <div class="ticker-track">
+      <span class="ticker-item">PAY <span class="v">PER TOKEN</span></span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">SETTLE ON <span class="v">GNOSIS</span></span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">ROUTE OVER <span class="v">SWARM</span></span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">STAKE IN <span class="v">xBZZ</span></span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">SLASH ON <span class="v">FAULT</span></span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">OPENAI-COMPATIBLE <span class="v">/v1/chat/completions</span></span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">PAY <span class="v">PER TOKEN</span></span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">SETTLE ON <span class="v">GNOSIS</span></span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">ROUTE OVER <span class="v">SWARM</span></span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">STAKE IN <span class="v">xBZZ</span></span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">SLASH ON <span class="v">FAULT</span></span>
+      <span class="ticker-item sep">//</span>
+      <span class="ticker-item">OPENAI-COMPATIBLE <span class="v">/v1/chat/completions</span></span>
+      <span class="ticker-item sep">//</span>
+    </div>
+  </div>
+
+  <section class="block">
+    <div class="block-head">
+      <div class="block-num">01</div>
+      <div class="block-title">
+        <h2>HOW IT WORKS</h2>
+        <p>Four moves. No central operator owns any of them. Selection, payment, reputation, and liveness all live on-chain.</p>
+      </div>
+    </div>
+    <div class="block-body">
       <ol class="steps">
         <li>
-          <h3>Providers run a container</h3>
-          <p>Anyone with a GPU and an OpenAI-compatible backend (Ollama, vLLM, llama.cpp&hellip;) runs the T4T provider container. It registers on-chain, stakes <span class="mono">xBZZ</span>, and publishes the models it serves with per-million-token prices.</p>
+          <h3>Providers run a container.</h3>
+          <p>Anyone with a GPU and an OpenAI-compatible backend (Ollama, vLLM, llama.cpp&hellip;) runs the T4T provider container. It registers on-chain, stakes <span class="mono">xBZZ</span>, and publishes per-million-token prices for each model it serves.</p>
         </li>
         <li>
-          <h3>Clients post jobs</h3>
-          <p>Clients run the T4T client container, which exposes a normal OpenAI <span class="mono">/v1/chat/completions</span> endpoint locally. It picks a provider from the on-chain directory, escrows the maximum payment, and sends the encrypted request over Swarm PSS.</p>
+          <h3>Gateways post jobs.</h3>
+          <p>The gateway container exposes a normal OpenAI <span class="mono">/v1/chat/completions</span> endpoint locally. It picks a provider from the on-chain directory, escrows the maximum payment, and ships the encrypted prompt over Swarm PSS.</p>
         </li>
         <li>
-          <h3>Provider serves, gets paid on delivery</h3>
-          <p>The provider runs inference locally, ships the response back over Swarm, and claims payment from escrow. If the deadline lapses, the client gets a refund. Repeated failures slash the provider&rsquo;s stake.</p>
+          <h3>Provider serves, claims on delivery.</h3>
+          <p>The provider runs inference locally, returns the response over Swarm, and claims payment from escrow. If the deadline lapses, the client gets a refund. Repeated faults slash the provider's stake.</p>
         </li>
         <li>
-          <h3>No middleman, no API key</h3>
-          <p>No central API gateway, no marketplace operator, no rate limit. Selection, payment, reputation, and liveness all live on-chain.</p>
+          <h3>No middleman, no API key.</h3>
+          <p>No central API gateway. No marketplace operator. No rate limit. Just a contract, a stake, and a hash for every byte exchanged.</p>
         </li>
       </ol>
-      <p class="muted">Full protocol: <a href="https://github.com/ffaerber/t4t/blob/main/docs/spec.md">docs/spec.md</a>.</p>
-    </section>
+      <p class="muted" style="margin-top:24px"><span class="mono">→</span> Full protocol: <a href="https://github.com/ffaerber/t4t/blob/main/docs/spec.md">docs/spec.md</a></p>
+    </div>
+  </section>
 
-    <section>
-      <div class="row-between">
-        <h2>Live model directory</h2>
-        <button id="refresh" type="button">Refresh</button>
+  <section class="block">
+    <div class="block-head">
+      <div class="block-num">02</div>
+      <div class="block-title">
+        <h2>LIVE DIRECTORY</h2>
+        <p>Pulled live from <span class="mono">ProviderRegistry</span> on Gnosis. Only providers with a fresh heartbeat (&le; 10&nbsp;min) and at least one offering appear.</p>
       </div>
-      <p class="muted">Pulled live from <span class="mono">ProviderRegistry</span> on Gnosis Chain. Only providers with a fresh heartbeat (&le; 10&nbsp;min) and at least one offering are shown.</p>
-      <div id="status" class="status muted">Loading&hellip;</div>
-      <div id="models"></div>
-    </section>
+    </div>
+    <div class="block-body">
+      <div class="directory">
+        <div class="directory-head">
+          <span>providers.live · sorted by price</span>
+          <button id="refresh" type="button">Refresh</button>
+        </div>
+        <div id="status" class="status">Loading&hellip;</div>
+        <div id="models"></div>
+      </div>
+    </div>
+  </section>
 
-    <section>
-      <h2>Get started</h2>
+  <section class="block">
+    <div class="block-head">
+      <div class="block-num">03</div>
+      <div class="block-title">
+        <h2>GET STARTED</h2>
+        <p>Two containers. Pick a side. Both ship with onboarding UIs that mint a wallet and bind a Swarm postage stamp on first run.</p>
+      </div>
+    </div>
+    <div class="block-body">
       <div class="grid2">
         <div>
-          <h3>As a client</h3>
-          <p>Run the client container, point your existing OpenAI SDK at <span class="mono">http://localhost:8080/v1</span>, and pay per token in xBZZ.</p>
-          <p><a href="https://github.com/ffaerber/t4t/blob/main/docs/getting-started-client.md">Client guide &rarr;</a></p>
+          <h3>As a gateway.</h3>
+          <p>Run the gateway container. Point your existing OpenAI SDK at <span class="mono">http://localhost:8080/v1</span>. Pay per token in xBZZ.</p>
+          <p><a href="https://github.com/ffaerber/t4t/blob/main/docs/getting-started-gateway.md">Gateway guide &rarr;</a></p>
         </div>
         <div>
-          <h3>As a provider</h3>
-          <p>Run the provider container against your local Ollama / vLLM, stake xBZZ, and earn per-token revenue from clients worldwide.</p>
+          <h3>As a provider.</h3>
+          <p>Run the provider container against your local Ollama / vLLM. Stake xBZZ. Earn per-token revenue from clients worldwide.</p>
           <p><a href="https://github.com/ffaerber/t4t/blob/main/docs/getting-started-provider.md">Provider guide &rarr;</a></p>
         </div>
       </div>
-    </section>
-  </main>
+    </div>
+  </section>
 
   <footer>
-    <div class="container muted">
-      <p><a href="https://github.com/ffaerber/t4t">github.com/ffaerber/t4t</a> &middot; ENS <span class="mono">t4t.eth</span> &middot; hosted on Swarm</p>
+    <div>
+      <div class="sig">T4T — TOKEN4TOKEN</div>
+      <div class="sig dim">github.com/ffaerber/t4t · ENS t4t.eth · hosted on Swarm</div>
     </div>
+    <div class="big">t4t.eth</div>
   </footer>
 
+</main>
   <script type="module" src="bundle.js"></script>
 </body>
 </html>
