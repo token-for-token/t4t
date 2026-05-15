@@ -29,6 +29,13 @@ export interface JobNotifyBody {
   /** xBZZ wei as a base-10 string to survive JSON. */
   maxPayment: string
   deliveryDeadline: number
+  /** Gateway's PSS pubkey (32-byte X coord, even-Y by convention).
+   *  Required so the provider can encrypt the ACK/deliver back without
+   *  looking up the gateway's address in the on-chain registry (gateways
+   *  aren't registered there). */
+  clientPssPubKey: Hex
+  /** Gateway's Bee overlay for PSS routing. */
+  clientSwarmOverlay: Hex
 }
 
 export interface JobAckBody {

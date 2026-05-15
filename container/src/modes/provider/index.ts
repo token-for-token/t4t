@@ -325,11 +325,6 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
             cipher,
             selfAddress: chain.address,
             signMessage,
-            resolveClient: async clientAddr => {
-              const p = await getProvider(chain, clientAddr).catch(() => null)
-              if (!p || !p.active) return null
-              return {swarmOverlay: p.swarmOverlay, pssPublicKey: p.pssPublicKey}
-            },
             onDelivered: async ({jobIdRouting: routing, responseHash, promptTokens, completionTokens}) => {
               const onChainJobId = await waitForOnChainJobId(jobIndex, routing)
               if (!onChainJobId) {

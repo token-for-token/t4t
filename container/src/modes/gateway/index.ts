@@ -87,6 +87,13 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
   const pssKeyPath = cfg.T4T_PSS_KEY_PATH ?? join(cfg.T4T_DATA_DIR, 'pss.key')
   const pssKeys = loadOrCreatePssKey(pssKeyPath)
   log.info({pssKeyPath, pssPubKeyX: pssKeys.publicKeyX}, 'PSS keypair loaded')
+
+  // Gateway's own Bee overlay — included in the JobNotify envelope so the
+  // provider can PSS-route ACK/deliver back without looking us up on-chain.
+  const selfOverlay = ('0x' + (
+    ((await bee.getNodeAddresses().catch(() => null))?.overlay?.toString() ?? '00'.repeat(32))
+      .replace(/^0x/, '')
+  )) as Hex
   const cipher = new EciesCipher(pssKeys.privateKey)
   const pss = new PssTransport({
     bee,
@@ -376,6 +383,8 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
           modelId: req.model,
           maxPayment: maxPayment.toString(),
           deliveryDeadline,
+          clientPssPubKey: pssKeys.publicKeyX,
+          clientSwarmOverlay: selfOverlay,
         },
       },
       msg => chain.wallet.signMessage({account: chain.wallet.account!, message: msg}),

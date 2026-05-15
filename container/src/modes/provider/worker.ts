@@ -37,10 +37,6 @@ export interface WorkerDeps {
   cipher: PayloadCipher
   selfAddress: Hex
   signMessage: (msg: string) => Promise<Hex>
-  /** Looked up from the on-chain registry by the listener. */
-  resolveClient: (
-    client: Hex,
-  ) => Promise<{swarmOverlay: Hex; pssPublicKey: Hex} | null>
   /** Called once the response is uploaded so the listener can submit claimJob. */
   onDelivered: (args: {jobIdRouting: Hex; responseHash: string; promptTokens: number; completionTokens: number}) => Promise<void>
   /** Optional persistence hook called at each lifecycle stage. */
@@ -66,8 +62,14 @@ export async function processJob(deps: WorkerDeps, notify: Envelope<JobNotifyBod
     },
     deps.signMessage,
   )
-  const clientPeer = await deps.resolveClient(notify.from)
-  if (!clientPeer) throw new Error(`client ${notify.from} not in registry`)
+  // The gateway advertises its PSS pubkey + Bee overlay in the signed
+  // envelope. We don't look it up on-chain — gateways aren't registered in
+  // ProviderRegistry, and the envelope signature already proves the gateway's
+  // wallet authorized this routing info.
+  const clientPeer = {
+    pssPublicKey: body.clientPssPubKey,
+    swarmOverlay: body.clientSwarmOverlay,
+  }
   await deps.pss.send({
     topic: clientTopic(notify.from),
     recipientOverlay: clientPeer.swarmOverlay,
