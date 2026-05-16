@@ -37,8 +37,14 @@ contract ProviderRegistry {
     uint64  public constant HEARTBEAT_TTL = 600;
     uint64  public constant UNBONDING_PERIOD = 2 days;
 
+    /// @notice Slashed stake is sent here and effectively burned. We deliberately
+    ///         do not route slash to a protocol-controlled treasury: that would
+    ///         let either a client or the protocol operator profit from a job
+    ///         that fails to deliver, creating an incentive to grief providers.
+    ///         True burn keeps the only beneficiary of liveness "nobody."
+    address public constant BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
+
     IERC20  public immutable xbzz;
-    address public immutable treasury;
     address public immutable owner;
 
     address public escrow;
@@ -74,9 +80,8 @@ contract ProviderRegistry {
         _;
     }
 
-    constructor(IERC20 _xbzz, address _treasury) {
+    constructor(IERC20 _xbzz) {
         xbzz = _xbzz;
-        treasury = _treasury;
         owner = msg.sender;
     }
 
@@ -163,23 +168,20 @@ contract ProviderRegistry {
     //                       Escrow hooks
     // ============================================================
 
-    /// @notice Slash `amount` from `providerOwner`'s stake; pay `clientShare`
-    ///         to `toClient`, route remainder to the treasury.
+    /// @notice Slash `amount` from `providerOwner`'s stake and send the
+    ///         tokens to `BURN_ADDRESS`. The client is made whole by the
+    ///         escrow refund only — no share of the slash is paid out, so
+    ///         no participant profits from a job failing.
     function slash(
         address providerOwner,
         uint128 amount,
-        address toClient,
-        uint128 clientShare,
         bytes32 jobId
     ) external onlyEscrow {
         Provider storage p = _providers[providerOwner];
         uint128 actual = amount > p.stake ? p.stake : amount;
         p.stake -= actual;
 
-        uint128 _client = clientShare > actual ? actual : clientShare;
-        uint128 _treasury = actual - _client;
-        if (_client > 0 && !xbzz.transfer(toClient, _client)) revert TransferFailed();
-        if (_treasury > 0 && !xbzz.transfer(treasury, _treasury)) revert TransferFailed();
+        if (actual > 0 && !xbzz.transfer(BURN_ADDRESS, actual)) revert TransferFailed();
 
         emit StakeSlashed(providerOwner, actual, jobId);
     }

@@ -5,7 +5,6 @@ import "forge-std/Test.sol";
 import {IERC20} from "../src/IERC20.sol";
 import {ProviderRegistry} from "../src/ProviderRegistry.sol";
 import {JobEscrow} from "../src/JobEscrow.sol";
-import {Treasury} from "../src/Treasury.sol";
 
 /// @notice End-to-end tests driven against a Gnosis Chain fork and the real
 ///         xBZZ ERC-20. Mirrors SwarmChat's fork-test pattern: spin up a fork,
@@ -21,15 +20,17 @@ contract ForkTest is Test {
     address internal constant XBZZ = 0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da;
 
     IERC20           internal xbzz;
-    Treasury         internal treasury;
     ProviderRegistry internal registry;
     JobEscrow        internal escrow;
 
-    address internal treasuryOwner = makeAddr("treasury-owner");
-    address internal provider      = makeAddr("provider");
-    address internal client        = makeAddr("client");
+    address internal provider = makeAddr("provider");
+    address internal client   = makeAddr("client");
 
     bool internal forked;
+
+    function _burn() internal view returns (address) {
+        return registry.BURN_ADDRESS();
+    }
 
     function setUp() public {
         string memory rpc = vm.envOr("FORK_GNOSIS_RPC_URL", string(""));
@@ -38,8 +39,7 @@ contract ForkTest is Test {
         forked = true;
 
         xbzz     = IERC20(XBZZ);
-        treasury = new Treasury(xbzz, treasuryOwner);
-        registry = new ProviderRegistry(xbzz, address(treasury));
+        registry = new ProviderRegistry(xbzz);
         escrow   = new JobEscrow(xbzz, registry);
         registry.setEscrow(address(escrow));
 
@@ -119,18 +119,18 @@ contract ForkTest is Test {
         // Provider never ACKs; warp past ackDeadline (= postedAt + ACK_WINDOW).
         vm.warp(block.timestamp + escrow.ACK_WINDOW() + 1);
 
-        uint128 stakeBefore     = registry.getStake(provider);
-        uint256 treasuryBefore  = xbzz.balanceOf(address(treasury));
-        uint256 clientBefore    = xbzz.balanceOf(client);
+        uint128 stakeBefore  = registry.getStake(provider);
+        uint256 burnBefore   = xbzz.balanceOf(_burn());
+        uint256 clientBefore = xbzz.balanceOf(client);
 
         vm.prank(client);
         escrow.cancelJob(jobId);
 
-        // Slash math: 2 × maxPay = 2e18, client share = 1.5 × maxPay = 1.5e18,
-        // treasury gets the remainder = 0.5e18. Client also receives the refund.
-        assertEq(xbzz.balanceOf(client) - clientBefore,            maxPay + 1.5 ether);
-        assertEq(xbzz.balanceOf(address(treasury)) - treasuryBefore, 0.5 ether);
-        assertEq(stakeBefore - registry.getStake(provider),        2 ether);
+        // Client receives only the refund (no slash share); full 2× maxPay
+        // slash is burned. Provider's stake drops by the slash amount.
+        assertEq(xbzz.balanceOf(client) - clientBefore,     maxPay);
+        assertEq(xbzz.balanceOf(_burn()) - burnBefore,      2 ether);
+        assertEq(stakeBefore - registry.getStake(provider), 2 ether);
     }
 
     // ----------------------------------------------------------------
@@ -151,17 +151,17 @@ contract ForkTest is Test {
 
         vm.warp(uint256(deadline) + 1);
 
-        uint128 stakeBefore    = registry.getStake(provider);
-        uint256 treasuryBefore = xbzz.balanceOf(address(treasury));
-        uint256 clientBefore   = xbzz.balanceOf(client);
+        uint128 stakeBefore  = registry.getStake(provider);
+        uint256 burnBefore   = xbzz.balanceOf(_burn());
+        uint256 clientBefore = xbzz.balanceOf(client);
 
         vm.prank(client);
         escrow.timeoutJob(jobId);
 
-        // Slash = 3 × maxPay = 3e18, client share = 1.5e18, treasury = 1.5e18.
-        assertEq(xbzz.balanceOf(client) - clientBefore,              maxPay + 1.5 ether);
-        assertEq(xbzz.balanceOf(address(treasury)) - treasuryBefore, 1.5 ether);
-        assertEq(stakeBefore - registry.getStake(provider),          3 ether);
+        // Client receives only the refund; full 3× maxPay slash is burned.
+        assertEq(xbzz.balanceOf(client) - clientBefore,     maxPay);
+        assertEq(xbzz.balanceOf(_burn()) - burnBefore,      3 ether);
+        assertEq(stakeBefore - registry.getStake(provider), 3 ether);
     }
 
     // ----------------------------------------------------------------

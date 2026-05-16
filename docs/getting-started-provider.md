@@ -57,7 +57,7 @@ If you fail to ACK within 30s **or** ACK and miss the delivery deadline, your st
 - No ACK: `max(2 × maxPayment, 1 xBZZ)`
 - Timeout after ACK: `max(3 × maxPayment, 1 xBZZ)`
 
-1.5× `maxPayment` goes to the client as an apology; the remainder goes to the treasury. Don't oversubscribe — the registry enforces `(openJobs + 1) × 3 × maxPayment ≤ stake` at `postJob` time.
+The slashed amount is **burned** — sent to `ProviderRegistry.BURN_ADDRESS` (`0x…dEaD`). Neither the client nor any treasury receives a share, which removes the inverse incentive for clients to grief providers into failing. Don't oversubscribe — the registry enforces `(openJobs + 1) × 3 × maxPayment ≤ stake` at `postJob` time.
 
 ## 6. Withdrawing
 

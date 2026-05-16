@@ -167,11 +167,9 @@ contract JobEscrow {
         uint256 capped = raw < MIN_SLASH ? MIN_SLASH : raw;
         uint128 slashAmount = capped > type(uint128).max ? type(uint128).max : uint128(capped);
 
-        // 1.5x maxPayment to the client, remainder to treasury.
-        uint256 clientCalc = (uint256(j.maxPayment) * 3) / 2;
-        uint128 clientShare = clientCalc > slashAmount ? slashAmount : uint128(clientCalc);
-
-        registry.slash(j.provider, slashAmount, j.client, clientShare, jobId);
+        // Slashed stake is burned, not paid out — see ProviderRegistry.BURN_ADDRESS.
+        // The client's only recovery is the refund already issued above.
+        registry.slash(j.provider, slashAmount, jobId);
         registry.recordJobFail(j.provider);
         return slashAmount;
     }
