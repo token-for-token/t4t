@@ -1,5 +1,9 @@
 # Proposal — container-managed postage stamps
 
+> **Status:** implemented. Opt in with `T4T_STAMP_MANAGE=true` in both
+> provider and gateway modes. See `container/src/lib/stamps.ts`,
+> `container/src/lib/admin-stamps.ts`, and the "Stamps" tab in the admin UI.
+
 Today operators buy a Swarm postage batch out-of-band (Bee dashboard or
 `POST /stamps`) and paste the 64-char hex into `POSTAGE_BATCH_ID`. Both
 container modes need a stamp:

@@ -48,7 +48,20 @@ services:
       # ESCROW_ADDRESS:   "0x34Db8E014E71928f17E23eC1272B602582222c9c"
       # XBZZ_ADDRESS:     "0xdBF3Ea6F5beE45c02255B2c26a16F300502F68da"
       #
-      # POSTAGE_BATCH_ID is auto-discovered from Bee on startup.
+      # POSTAGE_BATCH_ID: set this only to pin a specific batch and disable
+      # container-managed stamps (see T4T_STAMP_* below). When unset and
+      # T4T_STAMP_MANAGE is off, the container auto-discovers any usable
+      # batch the Bee node already owns.
+      #
+      # Container-managed postage stamps — opt in to let the container buy,
+      # reuse, and auto-top-up a labelled batch on the Bee node's behalf.
+      # T4T_STAMP_MANAGE:        "true"            # default false; flip on to enable
+      # T4T_STAMP_DEPTH:         "22"              # default — 2^22 chunks (~512MB)
+      # T4T_STAMP_TTL_DAYS:      "30"              # default — target lifetime for new/topped-up batches
+      # T4T_STAMP_MIN_TTL_DAYS:  "7"               # default — auto-top-up trigger
+      # T4T_STAMP_LABEL:         "t4t-managed"     # default — label used to recognise managed batches
+      # T4T_STAMP_DRY_RUN:       "false"           # default — set true to log cost without spending xBZZ
+      #
       # WALLET_KEY is created/imported via the admin UI on first boot.
       #
       # Selection + UX knobs (all have defaults; uncomment to override):

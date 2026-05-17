@@ -5,6 +5,7 @@ import type {GatewayConfig} from '../../lib/config'
 import {walletKeyFilePath} from '../../lib/config'
 import {startOnboardingServer, isZeroAddress} from '../../lib/onboarding'
 import {discoverUsableBatchId} from '../../lib/swarm'
+import {ensureManagedStamp, topUpIfBelow, type ManagedStamp} from '../../lib/stamps'
 import {privateKeyToAccount} from 'viem/accounts'
 import {ACK_WINDOW_SECONDS, cancelJob, ensureAllowance, makeChain, postJob, timeoutJob} from '../../lib/chain'
 import {ModelDiscovery} from './models'
@@ -56,9 +57,34 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
 
   const bee = new Bee(cfg.BEE_API_URL)
 
-  // Resolve postage batch — env override wins, otherwise ask Bee for a usable
-  // batch it already owns. No usable batch = onboarding (phase 3).
-  const resolved = cfg.POSTAGE_BATCH_ID ?? (await discoverUsableBatchId(bee).catch(() => null))
+  // Resolve postage batch:
+  //   1. POSTAGE_BATCH_ID env wins — operator owns the lifecycle, no auto-manage.
+  //   2. T4T_STAMP_MANAGE=true → buy or reuse a labelled batch, auto-top-up.
+  //   3. Else discover any usable batch the Bee node already has (legacy).
+  // No usable batch in any path = onboarding (phase 3).
+  let managed: ManagedStamp | null = null
+  let resolved: string | null = cfg.POSTAGE_BATCH_ID ?? null
+  if (!resolved && cfg.T4T_STAMP_MANAGE) {
+    try {
+      managed = await ensureManagedStamp({
+        bee,
+        logger: log,
+        opts: {
+          depth: cfg.T4T_STAMP_DEPTH,
+          ttlDays: cfg.T4T_STAMP_TTL_DAYS,
+          minTtlDays: cfg.T4T_STAMP_MIN_TTL_DAYS,
+          label: cfg.T4T_STAMP_LABEL,
+          dryRun: cfg.T4T_STAMP_DRY_RUN,
+        },
+      })
+      resolved = managed.batchID
+    } catch (err) {
+      log.error({err}, 'managed stamp ensure failed; falling back to discover')
+    }
+  }
+  if (!resolved) {
+    resolved = await discoverUsableBatchId(bee).catch(() => null)
+  }
   if (!resolved) {
     log.warn({beeUrl: cfg.BEE_API_URL}, 'no usable postage batch on Bee node — entering onboarding')
     startOnboardingServer({
@@ -69,7 +95,25 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     return
   }
   const postageBatchId: string = resolved
-  log.info({postageBatchId, source: cfg.POSTAGE_BATCH_ID ? 'env' : 'bee'}, 'postage batch resolved')
+  log.info(
+    {postageBatchId, source: cfg.POSTAGE_BATCH_ID ? 'env' : managed ? managed.source : 'bee'},
+    'postage batch resolved',
+  )
+
+  // Container-managed batches get a background TTL-watch on a fixed 5-minute
+  // tick (gateway has no heartbeat loop to piggyback on like provider does).
+  if (managed && cfg.T4T_STAMP_MANAGE) {
+    setInterval(() => {
+      topUpIfBelow({
+        bee,
+        logger: log,
+        batchId: postageBatchId,
+        ttlDays: cfg.T4T_STAMP_TTL_DAYS,
+        minTtlDays: cfg.T4T_STAMP_MIN_TTL_DAYS,
+        dryRun: cfg.T4T_STAMP_DRY_RUN,
+      }).catch(err => log.warn({err}, 'stamp top-up tick failed'))
+    }, 300_000).unref()
+  }
 
   const chain = makeChain({
     rpcUrl: cfg.GNOSIS_RPC_URL,
@@ -435,6 +479,9 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     chain,
     bee,
     postageBatchId,
+    stampManaged: managed !== null && cfg.T4T_STAMP_MANAGE,
+    stampDryRun: cfg.T4T_STAMP_DRY_RUN,
+    stampTtlDays: cfg.T4T_STAMP_TTL_DAYS,
     discovery,
     pendingCount: () => pending.size,
     logger: log,

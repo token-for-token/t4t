@@ -15,6 +15,7 @@ import {
   shortHex,
   statusPill,
 } from '../../lib/admin-html'
+import {attachStampsAdmin, renderStampsPage} from '../../lib/admin-stamps'
 
 export interface GatewayAdminDeps {
   host: string
@@ -26,6 +27,12 @@ export interface GatewayAdminDeps {
   bee: Bee
   /** Resolved postage batch ID used for every Swarm upload. */
   postageBatchId: string
+  /** True when T4T_STAMP_MANAGE=true and the container is auto-managing the batch. */
+  stampManaged: boolean
+  /** True when T4T_STAMP_DRY_RUN=true — disables top-up/dilute buttons. */
+  stampDryRun: boolean
+  /** Operator's intended TTL (days) — used as the default for the top-up input. */
+  stampTtlDays: number
   discovery: ModelDiscovery
   pendingCount: () => number
   /** Enable OpenAI-style "fake" SSE streaming on /v1/chat/completions. */
@@ -113,6 +120,27 @@ export function startAdminServer(deps: GatewayAdminDeps): void {
         refreshSeconds: deps.statusRefreshSeconds,
         active: 'providers', tabs: GATEWAY_TABS,
         body: providersPage(providers),
+      }),
+    )
+  })
+
+  const stampsCfg = {
+    bee: deps.bee,
+    postageBatchId: deps.postageBatchId,
+    managed: deps.stampManaged,
+    dryRun: deps.stampDryRun,
+    defaultTopUpDays: deps.stampTtlDays,
+    logger: deps.logger,
+  }
+  attachStampsAdmin(app, stampsCfg)
+
+  app.get('/stamps', (_req, res) => {
+    res.send(
+      layout({
+        title: 't4t gateway',
+        refreshSeconds: 0,
+        active: 'stamps', tabs: GATEWAY_TABS,
+        body: renderStampsPage(stampsCfg),
       }),
     )
   })

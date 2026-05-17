@@ -5,9 +5,9 @@ You want to earn xBZZ by serving Ollama inference. Run the provider container.
 ## 1. Prerequisites
 
 - A box with a GPU (or a fast CPU) running [Ollama](https://ollama.com).
-- A local Bee node.
+- A local Bee node (with xBZZ + xDAI on the Bee node's own wallet — used for postage stamps).
 - A wallet with **xBZZ** (≥ 100 for the minimum stake, plus headroom for concurrent jobs) and a little **xDAI** for gas.
-- A funded Swarm postage batch ID.
+- A Swarm postage batch — set `T4T_STAMP_MANAGE=true` to have the container buy and top up one automatically (recommended), or pre-buy via the Bee dashboard and pin its 64-char hex in `POSTAGE_BATCH_ID`.
 
 ## 2. Pull the models you offer
 
@@ -30,7 +30,13 @@ On startup the container queries the backend's `GET /v1/models` and registers ev
 | `REGISTRY_ADDRESS` | `0x…` |
 | `ESCROW_ADDRESS` | `0x…` |
 | `XBZZ_ADDRESS` | `0x…` |
-| `POSTAGE_BATCH_ID` | 64-char hex |
+| `POSTAGE_BATCH_ID` | 64-char hex — leave unset to let the container manage one |
+| `T4T_STAMP_MANAGE` | `true` to auto-create and auto-top-up a labelled postage batch (default `false`) |
+| `T4T_STAMP_DEPTH` | Bee batch depth (default `22` ≈ 512MB) |
+| `T4T_STAMP_TTL_DAYS` | Target lifetime when buying (default `30`) |
+| `T4T_STAMP_MIN_TTL_DAYS` | Auto-top-up trigger when remaining TTL falls below this (default `7`) |
+| `T4T_STAMP_LABEL` | Label used to recognise t4t-managed batches (default `t4t-managed`) |
+| `T4T_STAMP_DRY_RUN` | `true` to log the planned tx without spending xBZZ (default `false`) |
 | `WALLET_KEY` | `0x…` |
 | `T4T_INPUT_PRICE_DEFAULT` | xBZZ wei per 1M prompt tokens for newly-seen models; per-model overrides live on-chain via the admin UI |
 | `T4T_OUTPUT_PRICE_DEFAULT` | xBZZ wei per 1M completion tokens, same semantics |

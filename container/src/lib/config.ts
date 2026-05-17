@@ -46,10 +46,24 @@ const Common = z.object({
   REGISTRY_ADDRESS: Address.default(DEFAULT_REGISTRY_ADDRESS as `0x${string}`),
   ESCROW_ADDRESS: Address.default(DEFAULT_ESCROW_ADDRESS as `0x${string}`),
   XBZZ_ADDRESS: Address.default(DEFAULT_XBZZ_ADDRESS as `0x${string}`),
-  // Optional — if unset, the container queries the connected Bee node for a
-  // usable postage batch on startup. Operators only set this to pin a specific
-  // batch ID across multiple stamps.
+  // Optional — if unset, the container either auto-manages a batch
+  // (T4T_STAMP_MANAGE=true, see below) or queries the connected Bee node for
+  // a usable batch on startup. Operators only set this to pin a specific
+  // batch ID across multiple stamps. Setting it explicitly also disables
+  // container-managed stamps — the operator owns the lifecycle.
   POSTAGE_BATCH_ID: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
+  // Container-managed postage stamps (see docs/proposal-container-managed-stamps.md).
+  // Opt-in: when true and POSTAGE_BATCH_ID is unset, the container buys a
+  // labelled batch on first boot, reuses it across restarts, and auto-tops-up
+  // when remaining TTL drops below T4T_STAMP_MIN_TTL_DAYS.
+  T4T_STAMP_MANAGE: BoolFlag.default('false'),
+  T4T_STAMP_DEPTH: z.coerce.number().int().min(17).max(255).default(22),
+  T4T_STAMP_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  T4T_STAMP_MIN_TTL_DAYS: z.coerce.number().int().positive().default(7),
+  T4T_STAMP_LABEL: z.string().default('t4t-managed'),
+  // When true, the container logs the planned buy/top-up but never submits
+  // the stamp tx. Useful to preview xBZZ cost without spending.
+  T4T_STAMP_DRY_RUN: BoolFlag.default('false'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   T4T_DATA_DIR: z.string().default('/data'),
   T4T_PSS_KEY_PATH: z.string().optional(),

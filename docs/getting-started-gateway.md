@@ -6,7 +6,7 @@ You want to use T4T from any OpenAI-compatible app. Run the gateway container; p
 
 - A local Bee node (`bee` or run with the bundled `docker-compose.gateway-example.yml`).
 - A wallet with **xBZZ** (for payment) and a little **xDAI** (for gas) on Gnosis Chain.
-- A funded Swarm postage batch ID.
+- A Swarm postage batch — set `T4T_STAMP_MANAGE=true` to have the container buy and top up one automatically (recommended), or pre-buy via the Bee dashboard and pin its 64-char hex in `POSTAGE_BATCH_ID`. The Bee node's own wallet pays for the batch.
 - The deployed T4T contract addresses (registry, escrow, xBZZ).
 
 ## 2. Configure
@@ -21,7 +21,13 @@ Set these env vars (or put them in `.env`):
 | `REGISTRY_ADDRESS` | `0x…` |
 | `ESCROW_ADDRESS` | `0x…` |
 | `XBZZ_ADDRESS` | `0x…` |
-| `POSTAGE_BATCH_ID` | 64-char hex |
+| `POSTAGE_BATCH_ID` | 64-char hex — leave unset to let the container manage one |
+| `T4T_STAMP_MANAGE` | `true` to auto-create and auto-top-up a labelled postage batch (default `false`) |
+| `T4T_STAMP_DEPTH` | Bee batch depth (default `22` ≈ 512MB) |
+| `T4T_STAMP_TTL_DAYS` | Target lifetime when buying (default `30`) |
+| `T4T_STAMP_MIN_TTL_DAYS` | Auto-top-up trigger when remaining TTL falls below this (default `7`) |
+| `T4T_STAMP_LABEL` | Label used to recognise t4t-managed batches (default `t4t-managed`) |
+| `T4T_STAMP_DRY_RUN` | `true` to log the planned tx without spending xBZZ (default `false`) |
 | `WALLET_KEY` | `0x…` (or `WALLET_KEY_FILE`) |
 | `T4T_HTTP_PORT` | `8080` |
 | `T4T_SELECTION_STRATEGY` | `top_rep_cheapest` |
