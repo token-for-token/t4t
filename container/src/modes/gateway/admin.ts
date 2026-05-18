@@ -186,13 +186,19 @@ function jobsPage(rows: GatewayJobRow[], spent: bigint, pending: number, payload
   <table>
     <thead><tr>
       <th>Job</th><th>Provider</th><th>Model</th><th>Status</th>
-      <th>Posted</th><th>Max payment</th><th>Paid xBZZ</th><th>AI Token (input/output)</th>
+      <th>Posted</th><th>Max xBZZ <span class="muted">(escrow)</span></th><th>Paid xBZZ <span class="muted">(actual)</span></th><th>AI Token (input/output)</th>
       <th>Prompt</th><th>Error</th>
     </tr></thead>
     <tbody hx-get="/jobs/rows" hx-trigger="every 3s" hx-target="this" hx-swap="innerHTML">
       ${jobsTableBody(rows, payloads)}
     </tbody>
   </table>
+  <p class="muted" style="font-size:11px;margin-top:8px">
+    <strong>Max xBZZ</strong> is the worst-case amount escrowed at <code>postJob</code> (price &times; 1M-token cap).
+    <strong>Paid xBZZ</strong> is what the provider actually claimed for the tokens used; the escrow refunds the
+    difference back to this wallet in the same <code>claimJob</code> tx. Older rows show — for Paid because they
+    pre-date the on-chain claim watcher (see note in /wallet).
+  </p>
 </section>`
 }
 
