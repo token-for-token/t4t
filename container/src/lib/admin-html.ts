@@ -341,9 +341,11 @@ export function formatXBZZ(weiStr: string | bigint | null | undefined): string {
   return `${whole}.${fracStr.slice(0, 6)}`
 }
 
-export function formatTs(ts: number | null | undefined): string {
-  if (!ts) return '—'
-  return new Date(ts * 1000).toISOString().replace('T', ' ').slice(0, 19)
+export function formatTs(ts: number | bigint | null | undefined): string {
+  if (ts === null || ts === undefined) return '—'
+  const n = typeof ts === 'bigint' ? Number(ts) : ts
+  if (n === 0) return '—'
+  return new Date(n * 1000).toISOString().replace('T', ' ').slice(0, 19)
 }
 
 export function formatDuration(start: number | null, end: number | null): string {
