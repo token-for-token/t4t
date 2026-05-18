@@ -2,6 +2,8 @@
 
 Decentralized AI inference marketplace on Gnosis Chain + Ethereum Swarm.
 
+![T4T gateway + provider demo](docs/media/t4t-demo.gif)
+
 Clients pay providers in **xBZZ** to run inference on locally-hosted Ollama models. Requests and responses are stored on Swarm, addressed by hash. Job coordination happens via Swarm PSS. Payment, escrow, registry, and slashing are enforced by Solidity contracts on Gnosis Chain.
 
 ENS: `t4t.eth`. Full protocol: [`docs/spec.md`](docs/spec.md).
