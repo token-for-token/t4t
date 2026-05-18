@@ -16,6 +16,7 @@ import {
   statusPill,
 } from '../../lib/admin-html'
 import {attachStampsAdmin, renderStampsPage} from '../../lib/admin-stamps'
+import {getBzzUsd} from '../../lib/bzz-price'
 
 export interface GatewayAdminDeps {
   host: string
@@ -101,25 +102,31 @@ export function startAdminServer(deps: GatewayAdminDeps): void {
   })
 
   app.get('/models', async (_req, res) => {
-    const models = await deps.discovery.list().catch(() => [])
+    const [models, bzzUsd] = await Promise.all([
+      deps.discovery.list().catch(() => []),
+      getBzzUsd(deps.logger),
+    ])
     res.send(
       layout({
         title: 't4t gateway',
         refreshSeconds: deps.statusRefreshSeconds,
         active: 'models', tabs: GATEWAY_TABS,
-        body: modelsPage(models),
+        body: modelsPage(models, bzzUsd),
       }),
     )
   })
 
   app.get('/providers', async (_req, res) => {
-    const providers = await deps.discovery.listProviders().catch(() => [])
+    const [providers, bzzUsd] = await Promise.all([
+      deps.discovery.listProviders().catch(() => []),
+      getBzzUsd(deps.logger),
+    ])
     res.send(
       layout({
         title: 't4t gateway',
         refreshSeconds: deps.statusRefreshSeconds,
         active: 'providers', tabs: GATEWAY_TABS,
-        body: providersPage(providers),
+        body: providersPage(providers, bzzUsd),
       }),
     )
   })
@@ -258,18 +265,32 @@ function statusPanels(s: Record<string, unknown>): string {
 </div>`
 }
 
-function modelsPage(models: import('./models').ModelSummary[]): string {
+function priceCell(plur: bigint, bzzUsd: number | null): string {
+  const bzz = formatXBZZ(plur)
+  if (bzzUsd == null) return `<span class="mono">${escape(bzz)}</span> BZZ`
+  const usd = (Number(plur) / 1e16) * bzzUsd
+  const usdFmt = usd >= 1 ? usd.toFixed(4) : usd >= 0.0001 ? usd.toFixed(6) : usd.toExponential(2)
+  return `<span class="mono">${escape(bzz)}</span> BZZ<br><span class="muted mono">${escape(usdFmt)} USD</span>`
+}
+
+function modelsPage(
+  models: import('./models').ModelSummary[],
+  bzzUsd: number | null,
+): string {
+  const usdBadge = bzzUsd
+    ? `<span class="mono">1 BZZ ≈ ${bzzUsd.toFixed(4)} USD</span> <span class="muted">(<a href="https://www.coingecko.com/en/coins/swarm" target="_blank" rel="noopener">CoinGecko</a>, 5m cache)</span>`
+    : `<span class="muted">USD price unavailable</span>`
   const body = models.length === 0
     ? `<tr><td colspan="7" class="muted">No models discovered yet.</td></tr>`
     : models
         .map(
           m => `<tr>
-        <td>${escape(m.id)}</td>
+        <td class="mono">${escape(m.id)}</td>
         <td>${escape(m.providerCount)}</td>
-        <td>${escape(formatXBZZ(m.minInputPrice))}</td>
-        <td>${escape(formatXBZZ(m.medianInputPrice))}</td>
-        <td>${escape(formatXBZZ(m.minOutputPrice))}</td>
-        <td>${escape(formatXBZZ(m.medianOutputPrice))}</td>
+        <td>${priceCell(m.minInputPrice, bzzUsd)}</td>
+        <td>${priceCell(m.medianInputPrice, bzzUsd)}</td>
+        <td>${priceCell(m.minOutputPrice, bzzUsd)}</td>
+        <td>${priceCell(m.medianOutputPrice, bzzUsd)}</td>
         <td>${escape(m.slowestSlaSeconds)}s</td>
       </tr>`,
         )
@@ -277,7 +298,9 @@ function modelsPage(models: import('./models').ModelSummary[]): string {
   return `
 <section>
   <h2>Discovered models</h2>
-  <p class="muted">Prices are xBZZ wei per 1,000,000 tokens (input = prompt, output = completion).</p>
+  <p class="muted">
+    Per 1,000,000 AI tokens. Input = prompt AI tokens, output = completion AI tokens. ${usdBadge}
+  </p>
   <table>
     <thead><tr>
       <th>Model</th><th>Providers</th><th>Min in / 1M</th><th>Median in / 1M</th><th>Min out / 1M</th><th>Median out / 1M</th><th>Slowest SLA</th>
@@ -287,19 +310,25 @@ function modelsPage(models: import('./models').ModelSummary[]): string {
 </section>`
 }
 
-function providersPage(providers: import('./models').ProviderListing[]): string {
+function providersPage(
+  providers: import('./models').ProviderListing[],
+  bzzUsd: number | null,
+): string {
   if (providers.length === 0) {
     return `<section><h2>Providers</h2><p class="muted">No live providers discovered yet.</p></section>`
   }
+  const usdBadge = bzzUsd
+    ? `<span class="mono">1 BZZ ≈ ${bzzUsd.toFixed(4)} USD</span> <span class="muted">(<a href="https://www.coingecko.com/en/coins/swarm" target="_blank" rel="noopener">CoinGecko</a>, 5m cache)</span>`
+    : `<span class="muted">USD price unavailable</span>`
   const sections = providers
     .map(({provider: p, offerings}) => {
       const successRate = p.totalJobs === 0 ? '—' : `${Math.round((p.successfulJobs * 100) / p.totalJobs)}%`
       const rows = offerings
         .map(
           o => `<tr>
-        <td>${escape(o.modelId)}</td>
-        <td>${escape(formatXBZZ(o.inputPricePerMillionTokens))}</td>
-        <td>${escape(formatXBZZ(o.outputPricePerMillionTokens))}</td>
+        <td class="mono">${escape(o.modelId)}</td>
+        <td>${priceCell(o.inputPricePerMillionTokens, bzzUsd)}</td>
+        <td>${priceCell(o.outputPricePerMillionTokens, bzzUsd)}</td>
         <td>${escape(o.maxLatencySeconds)}s</td>
         <td>${o.maxContextTokens === 0n ? '<span class="muted">—</span>' : escape(o.maxContextTokens)}</td>
       </tr>`,
@@ -309,13 +338,13 @@ function providersPage(providers: import('./models').ProviderListing[]): string 
 <section>
   <h2 class="mono">${escape(p.owner)}</h2>
   <dl class="kv">
-    <dt>Stake</dt><dd>${escape(formatXBZZ(p.stake))} xBZZ</dd>
+    <dt>Stake</dt><dd>${escape(formatXBZZ(p.stake))} BZZ</dd>
     <dt>Jobs (success / total)</dt><dd>${escape(p.successfulJobs)} / ${escape(p.totalJobs)} (${escape(successRate)})</dd>
     <dt>Last heartbeat</dt><dd>${escape(formatTs(p.lastHeartbeat))}</dd>
   </dl>
   <table>
     <thead><tr>
-      <th>Model</th><th>Input / 1M</th><th>Output / 1M</th><th>SLA</th><th>Max ctx</th>
+      <th>Model</th><th>Input / 1M AI tokens</th><th>Output / 1M AI tokens</th><th>SLA</th><th>Max ctx</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>
@@ -325,7 +354,7 @@ function providersPage(providers: import('./models').ProviderListing[]): string 
   return `
 <section>
   <h2>Live providers</h2>
-  <p class="muted">Active, heartbeat-fresh providers. Prices are xBZZ wei per 1,000,000 tokens.</p>
+  <p class="muted">Active, heartbeat-fresh providers. Prices per 1,000,000 AI tokens. ${usdBadge}</p>
 </section>
 ${sections}`
 }
