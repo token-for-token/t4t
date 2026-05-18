@@ -33,7 +33,7 @@
       PRICE IT.
     </h1>
     <p class="hero-sub">
-      A marketplace where GPUs bid for prompts. Clients pay providers in xBZZ, payment escrows on <a href="https://www.gnosis.io/" target="_blank" rel="noopener">Gnosis</a>, and every byte routes over <a href="https://www.ethswarm.org/" target="_blank" rel="noopener">Swarm</a>. No middleman, no rate limit, no key.
+      A marketplace where GPUs bid for prompts. Clients pay providers in <a href="https://www.ethswarm.org/get-bzz" target="_blank" rel="noopener">xBZZ</a>, payment escrows on <a href="https://www.gnosis.io/" target="_blank" rel="noopener">Gnosis</a>, and every byte routes over <a href="https://www.ethswarm.org/" target="_blank" rel="noopener">Swarm</a>. No middleman, no rate limit, no key.
     </p>
     <dl class="hero-meta">
       <div><dt>SUBSTRATE</dt><dd>Gnosis + Swarm</dd></div>
@@ -81,6 +81,13 @@
       </div>
     </div>
     <div class="block-body">
+      <div class="compare">
+        <canvas id="compare-canvas" role="img"
+                aria-label="Animated sequence diagram of a T4T chat completion: app → gateway → swarm / chain / provider → app"></canvas>
+        <div class="compare-summary-row">
+          <p class="compare-summary">No middleman. Direct settlement. No key. Pay per AI token, refund on miss.</p>
+        </div>
+      </div>
       <ol class="steps">
         <li>
           <h3>Providers run a container.</h3>
@@ -150,12 +157,237 @@
   <footer>
     <div>
       <div class="sig">T4T — TOKEN4TOKEN</div>
-      <div class="sig dim">github.com/ffaerber/t4t · ENS t4t.eth · hosted on Swarm</div>
+      <div class="sig dim"><a href="https://github.com/ffaerber/t4t" target="_blank" rel="noopener">github.com/ffaerber/t4t</a> · ENS t4t.eth · hosted on Swarm</div>
     </div>
     <div class="big">t4t.eth</div>
   </footer>
 
 </main>
   <script type="module" src="bundle.js"></script>
+  <script>
+  /* Web2 vs Web3 flow animation — sequence-diagram style. Vertical lifelines
+     for each actor; events fire left-to-right over a cycle, drawing an arrow
+     between lanes with a particle traveling its length. Channels are colour
+     coded so you can tell PSS / Swarm / chain / HTTP traffic apart at a
+     glance. Pauses when scrolled off-screen. */
+  (() => {
+    const canvas = document.getElementById('compare-canvas')
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
+
+    const palette = {
+      bg:    '#0a0a0a',
+      line:  '#5a5a5a',
+      faint: '#4a4a4a',
+      dim:   '#8a8a8a',
+      ink:   '#ededed',
+      xbzz:  '#ff5c00',
+      swarm: '#ffd400',
+      chain: '#ff5c00',
+      pss:   '#00ff9c',
+      http:  '#9bbcff',
+    }
+    const CYCLE = 9000              // ms per full pass
+    const EVT_MS = 700                // each event's particle lives this long
+    const TOP_PAD = 24, BOT_PAD = 32
+
+    // ── T4T sequence — mirrors the actual implementation:
+    //   gateway/index.ts handleChat() · provider/worker.ts processJob() ·
+    //   provider/index.ts onDelivered → claimJob.
+    // (No on-chain ackJob — chain.ts exposes the function but no caller. The
+    //  provider's job_ack is PSS-only. Deliver fires before claim. The
+    //  provider's local inference call to Ollama/vLLM happens between
+    //  fetching the request and uploading the response.)
+    const web3 = {
+      title: '',
+      actors: ['AI AGENT', 'T4T GATEWAY', 'SWARM', 'GNOSIS', 'T4T PROVIDER', 'OLLAMA / vLLM'],
+      events: [
+        {t: 0.00, from: 0, to: 1, ch: 'http',  label: 'POST /v1/chat/completions'},
+        {t: 0.07, from: 1, to: 2, ch: 'swarm', label: 'encrypted request → requestHash'},
+        {t: 0.15, from: 1, to: 3, ch: 'chain', label: 'postJob (xBZZ escrow)'},
+        {t: 0.23, from: 1, to: 4, ch: 'pss',   label: 'PSS job_notify'},
+        {t: 0.31, from: 4, to: 1, ch: 'pss',   label: 'PSS job_ack'},
+        {t: 0.39, from: 4, to: 2, ch: 'swarm', label: 'fetch + decrypt request'},
+        {t: 0.47, from: 4, to: 5, ch: 'http',  label: 'inference.chatCompletion()'},
+        {t: 0.55, from: 5, to: 4, ch: 'http',  label: 'completion + usage tokens'},
+        {t: 0.63, from: 4, to: 2, ch: 'swarm', label: 'encrypted response → responseHash'},
+        {t: 0.71, from: 4, to: 1, ch: 'pss',   label: 'PSS job_deliver'},
+        {t: 0.78, from: 4, to: 3, ch: 'chain', label: 'claimJob (xBZZ paid out)'},
+        {t: 0.85, from: 1, to: 2, ch: 'swarm', label: 'fetch + decrypt response'},
+        {t: 0.92, from: 1, to: 0, ch: 'http',  label: '200 OK { choices: [...] }'},
+      ],
+    }
+
+    let W = 0, H = 0, DPR = 1
+    function resize() {
+      DPR = window.devicePixelRatio || 1
+      const rect = canvas.getBoundingClientRect()
+      W = Math.max(320, rect.width)
+      H = 480
+      canvas.style.height = H + 'px'
+      canvas.width = W * DPR
+      canvas.height = H * DPR
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0)
+    }
+    resize()
+    new ResizeObserver(resize).observe(canvas)
+
+    // X-coordinate of an actor's lifeline, given the lane horizontal extent.
+    function laneX(actorIdx, n, leftPad, rightPad) {
+      const usable = W - leftPad - rightPad
+      return leftPad + (usable * (actorIdx + 0.5)) / n
+    }
+
+    /** Draw a sequence-diagram lane into the rectangle [y0, y1] of the canvas.
+     *  `cycleT` is 0..1 progress through the loop. */
+    function drawLane(lane, y0, y1, cycleT, _accent) {
+      const titleH = lane.title ? 22 : 0
+      const ts = y0 + titleH
+      const te = y1 - 6
+
+      if (lane.title) {
+        ctx.fillStyle = _accent
+        ctx.font = '700 11px ui-monospace,Menlo,monospace'
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'top'
+        ctx.fillText(lane.title, 18, y0 + 6)
+        ctx.strokeStyle = palette.line
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.moveTo(0, y0 + titleH - 2)
+        ctx.lineTo(W, y0 + titleH - 2)
+        ctx.stroke()
+      }
+
+      // lifelines
+      const n = lane.actors.length
+      const LEFT_PAD = 96
+      const RIGHT_PAD = 24
+      const xs = lane.actors.map((_, i) => laneX(i, n, LEFT_PAD, RIGHT_PAD))
+
+      ctx.strokeStyle = palette.line
+      ctx.lineWidth = 1.2
+      ctx.setLineDash([4, 4])
+      for (const x of xs) {
+        ctx.beginPath()
+        ctx.moveTo(x, ts + 18)
+        ctx.lineTo(x, te)
+        ctx.stroke()
+      }
+      ctx.setLineDash([])
+      ctx.lineWidth = 1
+
+      // actor head labels
+      ctx.fillStyle = palette.ink
+      ctx.font = '700 10px ui-monospace,Menlo,monospace'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      for (let i = 0; i < n; i++) {
+        ctx.fillText(lane.actors[i], xs[i], ts + 9)
+      }
+
+      // events: draw each, animating any whose window overlaps `cycleT`.
+      // each event sits at a fixed Y inside [ts+30, te-12], in order.
+      const eventArea = (te - 12) - (ts + 30)
+      lane.events.forEach((ev, idx) => {
+        const evY = (ts + 30) + (eventArea * (idx + 0.5)) / lane.events.length
+        const x0 = xs[ev.from]
+        const x1 = xs[ev.to]
+        const color = palette[ev.ch] ?? palette.dim
+
+        // arrow's animation window: [ev.t, ev.t + EVT_MS/CYCLE]
+        const winEnd = ev.t + EVT_MS / CYCLE
+        const localT = (cycleT - ev.t + 1) % 1                 // 0..1 inside the event window
+        const inWindow = cycleT >= ev.t && cycleT < winEnd
+        const inWindowT = inWindow ? (cycleT - ev.t) / (EVT_MS / CYCLE) : null
+        const past = cycleT >= winEnd || (cycleT < ev.t - 0.2)  // either fully past or way ahead
+
+        // arrow shaft + arrowhead. Faint when past/not-yet, bright in window.
+        ctx.strokeStyle = inWindow ? color : palette.line
+        ctx.fillStyle  = inWindow ? color : palette.line
+        ctx.lineWidth = inWindow ? 1.5 : 1.2
+        ctx.globalAlpha = inWindow ? 1 : 0.85
+
+        const dir = x1 > x0 ? 1 : -1
+        ctx.beginPath()
+        ctx.moveTo(x0 + dir * 4, evY)
+        ctx.lineTo(x1 - dir * 8, evY)
+        ctx.stroke()
+        // arrowhead
+        ctx.beginPath()
+        ctx.moveTo(x1 - dir * 8, evY)
+        ctx.lineTo(x1 - dir * 14, evY - 4)
+        ctx.lineTo(x1 - dir * 14, evY + 4)
+        ctx.closePath()
+        ctx.fill()
+
+        // label — sits to the right of mid-point for left-to-right arrows,
+        // left of it for right-to-left, always above the arrow. Stays at full
+        // brightness independent of the event window so the whole protocol is
+        // readable at a glance; only the arrow + particle pulse on the active
+        // event.
+        ctx.font = '10px ui-monospace,Menlo,monospace'
+        ctx.textAlign = dir > 0 ? 'left' : 'right'
+        ctx.textBaseline = 'bottom'
+        ctx.globalAlpha = 1
+        ctx.fillStyle = inWindow ? color : palette.ink
+        const midX = (x0 + x1) / 2
+        ctx.fillText(ev.label, midX + dir * 4, evY - 4)
+
+        // particle (bright dot that travels)
+        if (inWindow) {
+          const px = x0 + (x1 - x0) * inWindowT
+          ctx.beginPath()
+          ctx.arc(px, evY, 3.6, 0, Math.PI * 2)
+          ctx.fillStyle = color
+          ctx.fill()
+          // soft halo
+          ctx.beginPath()
+          ctx.arc(px, evY, 8, 0, Math.PI * 2)
+          ctx.fillStyle = color
+          ctx.globalAlpha = 0.15
+          ctx.fill()
+          ctx.globalAlpha = 1
+        }
+      })
+    }
+
+    // Channel legend at the bottom (visible when Web 3 section is shown).
+    function drawLegend(y) {
+      const items = [
+        ['HTTP',  palette.http],
+        ['SWARM', palette.swarm],
+        ['CHAIN', palette.chain],
+        ['PSS',   palette.pss],
+      ]
+      ctx.font = '700 10px ui-monospace,Menlo,monospace'
+      ctx.textBaseline = 'middle'
+      let x = 18
+      for (const [label, color] of items) {
+        ctx.fillStyle = color
+        ctx.fillRect(x, y - 4, 10, 8)
+        ctx.fillStyle = palette.dim
+        ctx.fillText(label, x + 16, y)
+        x += 80
+      }
+    }
+
+    let visible = true
+    new IntersectionObserver(es => { visible = es[0].isIntersecting }, {threshold: 0.05}).observe(canvas)
+
+    const start = performance.now()
+    function frame(now) {
+      requestAnimationFrame(frame)
+      if (!visible) return
+      const cycleT = ((now - start) % CYCLE) / CYCLE
+      ctx.fillStyle = palette.bg
+      ctx.fillRect(0, 0, W, H)
+
+      drawLane(web3, TOP_PAD, H - BOT_PAD, cycleT, palette.xbzz)
+      drawLegend(H - 12)
+    }
+    requestAnimationFrame(frame)
+  })()
+  </script>
 </body>
 </html>

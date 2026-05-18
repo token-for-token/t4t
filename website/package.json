@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "deploy": "node deploy-swarm.mjs"
+    "deploy": "node deploy-swarm.mjs",
+    "ens:register": "node ens-register.mjs",
+    "ens:set-contenthash": "node ens-set-contenthash.mjs"
   },
   "dependencies": {
     "viem": "^2.21.0"
