@@ -118,8 +118,10 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
         batchId: postageBatchId,
         ttlDays: cfg.T4T_STAMP_TTL_DAYS,
         minTtlDays: cfg.T4T_STAMP_MIN_TTL_DAYS,
+        maxUtilization: cfg.T4T_STAMP_MAX_UTILIZATION,
+        maxDepth: cfg.T4T_STAMP_MAX_DEPTH,
         dryRun: cfg.T4T_STAMP_DRY_RUN,
-      }).catch(err => log.warn({err}, 'stamp top-up tick failed'))
+      }).catch(err => log.warn({err}, 'stamp tick failed'))
     }, tickMs).unref()
   }
 

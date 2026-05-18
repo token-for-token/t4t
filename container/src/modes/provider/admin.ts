@@ -12,10 +12,12 @@ import {
   formatTs,
   formatXBZZ,
   layout,
+  parseBzzToPlur,
   PROVIDER_TABS,
   shortHex,
   statusPill,
 } from '../../lib/admin-html'
+import {getBzzUsd} from '../../lib/bzz-price'
 import {attachStampsAdmin, renderStampsPage} from '../../lib/admin-stamps'
 
 const HEARTBEAT_TTL = 600
@@ -91,13 +93,14 @@ export function startAdminServer(deps: ProviderAdminDeps): void {
     res.send(statusPanels(status))
   })
 
-  app.get('/models', (_req, res) => {
+  app.get('/models', async (_req, res) => {
+    const bzzUsd = await getBzzUsd(deps.logger)
     res.send(
       layout({
         title: 't4t provider',
         refreshSeconds: 0,
         active: 'models', tabs: PROVIDER_TABS,
-        body: modelsPage([...deps.offerings.values()]),
+        body: modelsPage([...deps.offerings.values()], bzzUsd),
       }),
     )
   })
@@ -136,8 +139,8 @@ export function startAdminServer(deps: ProviderAdminDeps): void {
 
   app.post('/models/:modelId/price', express.urlencoded({extended: false}), async (req, res) => {
     const modelId = req.params.modelId
-    const inRaw = String(req.body?.inputPricePerMillionTokens ?? '').trim()
-    const outRaw = String(req.body?.outputPricePerMillionTokens ?? '').trim()
+    const inRaw = String(req.body?.inputBzzPerMillion ?? '').trim()
+    const outRaw = String(req.body?.outputBzzPerMillion ?? '').trim()
     const offering = deps.offerings.get(modelId)
     if (!offering) {
       res.status(404).send(`<p class="err">unknown model: ${escape(modelId)}</p>`)
@@ -146,11 +149,10 @@ export function startAdminServer(deps: ProviderAdminDeps): void {
     let inParsed: bigint
     let outParsed: bigint
     try {
-      inParsed = BigInt(inRaw)
-      outParsed = BigInt(outRaw)
-      if (inParsed < 0n || outParsed < 0n) throw new Error('negative')
-    } catch {
-      res.status(400).send(`<p class="err">invalid price (in=${escape(inRaw)} out=${escape(outRaw)})</p>`)
+      inParsed = parseBzzToPlur(inRaw)
+      outParsed = parseBzzToPlur(outRaw)
+    } catch (err) {
+      res.status(400).send(`<p class="err">invalid price: ${escape((err as Error).message)}</p>`)
       return
     }
     deps.offerings.set(modelId, {
@@ -174,39 +176,109 @@ export function startAdminServer(deps: ProviderAdminDeps): void {
   )
 }
 
-function modelsPage(offerings: ModelOffering[]): string {
+function modelsPage(offerings: ModelOffering[], bzzUsd: number | null): string {
   if (offerings.length === 0) {
     return `<section><h2>Models</h2><p class="muted">No models registered. Load a model in the backend and restart.</p></section>`
   }
+  const usdBadge = bzzUsd
+    ? `<span class="mono">1 BZZ ≈ ${bzzUsd.toFixed(4)} USD</span> <span class="muted">(<a href="https://www.coingecko.com/en/coins/swarm" target="_blank" rel="noopener">CoinGecko</a>, 5m cache)</span>`
+    : `<span class="muted">USD price unavailable</span>`
   return `
 <section>
   <h2>Models</h2>
-  <p class="muted">Prices are xBZZ wei per 1,000,000 tokens. Input = prompt tokens, output = completion tokens. Edits push <code>updateOfferings</code> on-chain.</p>
+  <p class="muted">
+    Prices are <strong>BZZ per 1,000,000 AI tokens</strong>. Input = prompt AI tokens, output = completion AI tokens.
+    Type a decimal BZZ amount; the calculator below shows the on-chain PLUR value and the USD
+    equivalent at the current BZZ-USD rate. Edits push <code>updateOfferings</code> on-chain.
+  </p>
+  <p class="muted" style="margin-top:-6px">
+    <span class="mono">1 BZZ = 10^16 PLUR</span> · ${usdBadge}
+  </p>
   <table>
     <thead><tr>
       <th>Model</th>
-      <th>Input price (wei / 1M)</th>
-      <th>Input (xBZZ)</th>
-      <th>Output price (wei / 1M)</th>
-      <th>Output (xBZZ)</th>
+      <th>Input price (BZZ / 1M AI tokens)</th>
+      <th>Output price (BZZ / 1M AI tokens)</th>
       <th></th>
     </tr></thead>
     <tbody>
       ${offerings.map(modelRow).join('')}
     </tbody>
   </table>
+  <script>
+  (() => {
+    if (window.__t4tPriceCalcInit) return; window.__t4tPriceCalcInit = true;
+    const SCALE = 10n ** 16n;
+    const BZZ_USD = ${bzzUsd ?? 'null'};
+    function parse(s){
+      s = String(s||'').trim();
+      if (!/^\\d+(\\.\\d*)?$|^\\.\\d+$/.test(s)) return null;
+      const [w='0', f=''] = s.split('.');
+      if (f.length > 16) return null;
+      return BigInt((w||'0') + (f + '0000000000000000').slice(0,16));
+    }
+    function formatBzz(plur){
+      const w = plur / SCALE, f = plur % SCALE;
+      if (f === 0n) return w.toString();
+      const s = (f + SCALE).toString().slice(1).replace(/0+$/, '');
+      return w.toString() + '.' + s.slice(0, 8);
+    }
+    function bzzToUsd(plur){
+      if (BZZ_USD == null) return null;
+      // bzz = plur / 1e16; usd = bzz * BZZ_USD. Use Number once we're down at
+      // human magnitudes — losing precision below $1e-12 is fine for display.
+      const bzz = Number(plur) / 1e16;
+      return bzz * BZZ_USD;
+    }
+    function fmtUsd(u){
+      if (u == null) return '';
+      if (u >= 1) return u.toFixed(4) + ' USD';
+      if (u >= 0.0001) return u.toFixed(6) + ' USD';
+      return u.toExponential(2) + ' USD';
+    }
+    function updatePreview(input){
+      const plur = parse(input.value);
+      const hint = input.parentNode.querySelector('.price-hint');
+      if (!hint) return;
+      if (plur === null){
+        hint.textContent = '— invalid';
+        hint.className = 'price-hint err mono';
+        return;
+      }
+      const usdPer1M = bzzToUsd(plur);
+      const usdLine = usdPer1M != null ? ' · <span>' + fmtUsd(usdPer1M) + ' / 1M AI tokens</span>' : '';
+      hint.innerHTML = '<span>' + plur.toString() + ' PLUR / 1M AI tokens</span>' + usdLine;
+      hint.className = 'price-hint muted mono';
+    }
+    document.querySelectorAll('input[data-price]').forEach(el => {
+      el.addEventListener('input', () => updatePreview(el));
+      updatePreview(el);
+    });
+    document.body.addEventListener('htmx:afterSwap', () => {
+      document.querySelectorAll('input[data-price]').forEach(el => updatePreview(el));
+    });
+  })();
+  </script>
 </section>`
 }
 
 function modelRow(o: ModelOffering): string {
   const formId = `price-${o.modelId.replace(/[^a-zA-Z0-9-_]/g, '-')}`
+  const inputBzz = formatXBZZ(o.inputPricePerMillionTokens)
+  const outputBzz = formatXBZZ(o.outputPricePerMillionTokens)
   return `<tr id="${escape(formId)}">
     <form hx-post="/models/${encodeURIComponent(o.modelId)}/price" hx-target="#${escape(formId)}" hx-swap="outerHTML">
       <td class="mono">${escape(o.modelId)}</td>
-      <td><input name="inputPricePerMillionTokens" type="text" inputmode="numeric" value="${escape(o.inputPricePerMillionTokens.toString())}" required></td>
-      <td class="mono">${escape(formatXBZZ(o.inputPricePerMillionTokens))}</td>
-      <td><input name="outputPricePerMillionTokens" type="text" inputmode="numeric" value="${escape(o.outputPricePerMillionTokens.toString())}" required></td>
-      <td class="mono">${escape(formatXBZZ(o.outputPricePerMillionTokens))}</td>
+      <td>
+        <input name="inputBzzPerMillion" type="text" inputmode="decimal" data-price="in"
+               value="${escape(inputBzz)}" required>
+        <div class="price-hint muted mono">${escape(o.inputPricePerMillionTokens.toString())} PLUR / 1M AI tokens</div>
+      </td>
+      <td>
+        <input name="outputBzzPerMillion" type="text" inputmode="decimal" data-price="out"
+               value="${escape(outputBzz)}" required>
+        <div class="price-hint muted mono">${escape(o.outputPricePerMillionTokens.toString())} PLUR / 1M AI tokens</div>
+      </td>
       <td><button type="submit">Save</button></td>
     </form>
   </tr>`
@@ -232,7 +304,7 @@ function jobsPage(
   <table>
     <thead><tr>
       <th>Job</th><th>Client</th><th>Model</th><th>Status</th>
-      <th>Received</th><th>Duration</th><th>Tokens (p/c)</th><th>Earned</th><th>Error</th>
+      <th>Received</th><th>Duration</th><th>AI tokens (p/c)</th><th>Earned</th><th>Error</th>
     </tr></thead>
     <tbody hx-get="/jobs/rows" hx-trigger="every ${refreshSec}s" hx-target="this" hx-swap="innerHTML">
       ${jobsTableBody(rows)}
@@ -350,8 +422,8 @@ function clientViewSection(offerings: ModelOffering[], address?: string): string
   <table>
     <thead><tr>
       <th>Model</th>
-      <th>Input / 1M tokens</th>
-      <th>Output / 1M tokens</th>
+      <th>Input / 1M AI tokens</th>
+      <th>Output / 1M AI tokens</th>
       <th>SLA</th>
       <th>Max ctx</th>
     </tr></thead>

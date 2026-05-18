@@ -266,6 +266,10 @@ export function layout(opts: LayoutOpts): string {
     }
     .toast .hash,.toast .note{font-family:var(--font-mono);font-size:11px;color:var(--ink-dim)}
     @keyframes toastIn{from{transform:translateX(24px);opacity:0}to{transform:translateX(0);opacity:1}}
+    .price-hint{font-size:12px;line-height:1.5;margin-top:6px;color:var(--ink);letter-spacing:.02em;font-weight:500}
+    .price-hint span{display:inline-block}
+    .price-hint span+span{color:var(--xbzz)}
+    .price-hint.err{color:var(--slash)}
   </style>
 </head>
 <body>
@@ -339,6 +343,20 @@ export function formatXBZZ(weiStr: string | bigint | null | undefined): string {
   if (frac === 0n) return `${whole}`
   const fracStr = (frac + scale).toString().slice(1).replace(/0+$/, '')
   return `${whole}.${fracStr.slice(0, 6)}`
+}
+
+/** Parse a decimal-BZZ string (e.g. "0.3", "1.5", "0") into PLUR (raw wei).
+ *  PLUR is the smallest unit of BZZ — 1 BZZ = 10^16 PLUR. We do string math
+ *  to avoid float precision loss: a value like "0.000000000001" can't survive
+ *  Number(). Throws on non-decimal input or more than 16 fractional digits. */
+export function parseBzzToPlur(input: string): bigint {
+  const s = input.trim()
+  if (!/^\d+(\.\d*)?$|^\.\d+$/.test(s)) throw new Error(`not a decimal: "${input}"`)
+  const [wholeRaw = '0', fracRaw = ''] = s.split('.')
+  if (fracRaw.length > 16) throw new Error(`too many fractional digits (max 16 for BZZ): "${input}"`)
+  const whole = wholeRaw || '0'
+  const fracPadded = (fracRaw + '0000000000000000').slice(0, 16)
+  return BigInt(whole + fracPadded)
 }
 
 export function formatTs(ts: number | bigint | null | undefined): string {

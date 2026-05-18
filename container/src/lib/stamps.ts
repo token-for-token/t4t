@@ -209,38 +209,68 @@ export interface TopUpIfBelowDeps {
   batchId: string
   ttlDays: number
   minTtlDays: number
+  /** Auto-dilute (raise depth by +1) when utilization crosses this fraction.
+   *  Doubles bucket capacity but halves remaining TTL, so we top up first when
+   *  TTL is also under threshold. Set to 1.0 to disable. */
+  maxUtilization: number
+  /** Hard cap so an unexpected utilization spike can't run depth to infinity. */
+  maxDepth: number
   dryRun: boolean
 }
 
-/** Background tick: top up if remaining TTL falls below `minTtlDays`.
- *  Returns the post-tick remaining-days for the admin UI to surface. */
-export async function topUpIfBelow(deps: TopUpIfBelowDeps): Promise<{toppedUp: boolean; remainingDays: number}> {
+/** Background tick: top up if remaining TTL falls below `minTtlDays`, and
+ *  dilute if utilization crosses `maxUtilization`. Returns the post-tick
+ *  remaining-days for the admin UI to surface. */
+export async function topUpIfBelow(deps: TopUpIfBelowDeps): Promise<{toppedUp: boolean; diluted: boolean; remainingDays: number}> {
   const all = await listAllBatches(deps.bee)
-  const batch = all.find(b => b.batchID.toString() === deps.batchId)
+  let batch = all.find(b => b.batchID.toString() === deps.batchId)
   if (!batch) {
     deps.logger.warn({batchId: deps.batchId}, 'managed batch not found on Bee — skipping top-up tick')
-    return {toppedUp: false, remainingDays: 0}
+    return {toppedUp: false, diluted: false, remainingDays: 0}
   }
+  let toppedUp = false
+  let diluted = false
+
+  // Top-up first — diluting halves remaining TTL, so if we're already short
+  // we'd push the batch below the floor.
   const remaining = batch.duration.toDays()
-  if (remaining >= deps.minTtlDays) return {toppedUp: false, remainingDays: remaining}
-  if (deps.dryRun) {
-    deps.logger.warn({batchId: deps.batchId, remaining, threshold: deps.minTtlDays}, 'dry-run: would auto-top-up')
-    return {toppedUp: false, remainingDays: remaining}
+  if (remaining < deps.minTtlDays) {
+    if (deps.dryRun) {
+      deps.logger.warn({batchId: deps.batchId, remaining, threshold: deps.minTtlDays}, 'dry-run: would auto-top-up')
+    } else {
+      const amount = await amountForTtl(deps.bee, deps.ttlDays)
+      deps.logger.info(
+        {
+          batchId: deps.batchId,
+          remaining,
+          threshold: deps.minTtlDays,
+          amount: amount.toString(),
+          walletCost: stampWalletCostWei(amount, batch.depth).toString(),
+        },
+        'auto-topping up managed batch',
+      )
+      await deps.bee.topUpBatch(deps.batchId, amount)
+      toppedUp = true
+      batch = (await listAllBatches(deps.bee)).find(b => b.batchID.toString() === deps.batchId) ?? batch
+    }
   }
-  const amount = await amountForTtl(deps.bee, deps.ttlDays)
-  deps.logger.info(
-    {
-      batchId: deps.batchId,
-      remaining,
-      threshold: deps.minTtlDays,
-      amount: amount.toString(),
-      walletCost: stampWalletCostWei(amount, batch.depth).toString(),
-    },
-    'auto-topping up managed batch',
-  )
-  await deps.bee.topUpBatch(deps.batchId, amount)
-  const refreshed = (await listAllBatches(deps.bee)).find(b => b.batchID.toString() === deps.batchId)
-  return {toppedUp: true, remainingDays: refreshed?.duration.toDays() ?? remaining}
+
+  // Auto-dilute on high utilization. Bee tracks the most-loaded bucket; one
+  // hot bucket can spike utilization long before "total bytes" is anywhere
+  // near full, so this kicks in earlier than the operator expects.
+  if (batch.usage >= deps.maxUtilization && batch.depth < deps.maxDepth) {
+    const newDepth = batch.depth + 1
+    if (deps.dryRun) {
+      deps.logger.warn({batchId: deps.batchId, usage: batch.usage, from: batch.depth, to: newDepth}, 'dry-run: would auto-dilute')
+    } else {
+      deps.logger.info({batchId: deps.batchId, usage: batch.usage, from: batch.depth, to: newDepth}, 'auto-diluting managed batch')
+      await deps.bee.diluteBatch(deps.batchId, newDepth)
+      diluted = true
+      batch = (await listAllBatches(deps.bee)).find(b => b.batchID.toString() === deps.batchId) ?? batch
+    }
+  }
+
+  return {toppedUp, diluted, remainingDays: batch.duration.toDays()}
 }
 
 /** Manual top-up triggered from the admin UI. Amount is derived from the

@@ -57,10 +57,19 @@ const Common = z.object({
   // labelled batch on first boot, reuses it across restarts, and auto-tops-up
   // when remaining TTL drops below T4T_STAMP_MIN_TTL_DAYS.
   T4T_STAMP_MANAGE: BoolFlag.default('false'),
-  T4T_STAMP_DEPTH: z.coerce.number().int().min(17).max(255).default(22),
+  // Default depth: 24 gives 2^(24-16) = 256 chunks/bucket (4× headroom over
+  // the old default of 22). Each +1 doubles per-chunk BZZ cost — depth 24 is
+  // ~4× more BZZ than 22 for the same TTL, but stays usable for >100 jobs
+  // before the auto-dilute below would trigger.
+  T4T_STAMP_DEPTH: z.coerce.number().int().min(17).max(255).default(24),
   T4T_STAMP_TTL_DAYS: z.coerce.number().int().positive().default(30),
   T4T_STAMP_MIN_TTL_DAYS: z.coerce.number().int().positive().default(7),
   T4T_STAMP_LABEL: z.string().default('t4t-managed'),
+  // Auto-dilute when utilization crosses this fraction. Free in BZZ terms,
+  // but halves remaining TTL per +1 depth, so combined with the TTL top-up
+  // it keeps the batch usable without operator intervention.
+  T4T_STAMP_MAX_UTILIZATION: z.coerce.number().min(0).max(1).default(0.5),
+  T4T_STAMP_MAX_DEPTH: z.coerce.number().int().min(17).max(255).default(28),
   // When true, the container logs the planned buy/top-up but never submits
   // the stamp tx. Useful to preview xBZZ cost without spending.
   T4T_STAMP_DRY_RUN: BoolFlag.default('false'),
