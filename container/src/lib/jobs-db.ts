@@ -103,8 +103,7 @@ CREATE TABLE IF NOT EXISTS gateway_jobs (
 );
 CREATE INDEX IF NOT EXISTS client_jobs_posted ON gateway_jobs(postedAt);
 CREATE INDEX IF NOT EXISTS client_jobs_status ON gateway_jobs(status);
--- Note: index on onChainJobId is created by the migration block after
--- ALTER TABLE ADD COLUMN runs (handles old DBs that pre-date the column).
+CREATE INDEX IF NOT EXISTS gateway_jobs_onchain ON gateway_jobs(onChainJobId);
 `
 
 const TX_SCHEMA = `
@@ -144,15 +143,10 @@ export class JobsDb {
     this.db.exec(PROVIDER_SCHEMA)
     this.db.exec(GATEWAY_SCHEMA)
     this.db.exec(TX_SCHEMA)
-    // Idempotent migrations for already-deployed DBs. SQLite throws "duplicate
-    // column name" on re-run — swallow that one error per statement so the
-    // index creation still gets a chance to run on subsequent boots.
-    try {
-      this.db.exec(`ALTER TABLE gateway_jobs ADD COLUMN onChainJobId TEXT`)
-    } catch {
-      // column already present
-    }
-    this.db.exec(`CREATE INDEX IF NOT EXISTS gateway_jobs_onchain ON gateway_jobs(onChainJobId)`)
+    // Schemas use `CREATE TABLE IF NOT EXISTS`, so they apply only to fresh
+    // databases. Pre-existing tables are NOT altered — operators with old
+    // databases that lack newer columns should wipe `jobs.db*` to recreate
+    // (see docs / admin UI for the path).
   }
 
   // ---------- transactions (shared) ----------
