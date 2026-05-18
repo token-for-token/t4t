@@ -44,6 +44,9 @@ export interface ProviderJobRow {
 
 export interface GatewayJobRow {
   jobId: string
+  /** On-chain bytes32 jobId from JobEscrow. Joins the row to JobClaimed events
+   *  so we can update `actualPayment` when the provider claims. */
+  onChainJobId: string | null
   provider: string
   modelId: string
   status: JobStatus
@@ -82,6 +85,7 @@ CREATE INDEX IF NOT EXISTS provider_jobs_status ON provider_jobs(status);
 const GATEWAY_SCHEMA = `
 CREATE TABLE IF NOT EXISTS gateway_jobs (
   jobId            TEXT PRIMARY KEY,
+  onChainJobId     TEXT,
   provider         TEXT NOT NULL,
   modelId          TEXT NOT NULL,
   status           TEXT NOT NULL,
@@ -99,6 +103,7 @@ CREATE TABLE IF NOT EXISTS gateway_jobs (
 );
 CREATE INDEX IF NOT EXISTS client_jobs_posted ON gateway_jobs(postedAt);
 CREATE INDEX IF NOT EXISTS client_jobs_status ON gateway_jobs(status);
+CREATE INDEX IF NOT EXISTS gateway_jobs_onchain ON gateway_jobs(onChainJobId);
 `
 
 const TX_SCHEMA = `
@@ -138,6 +143,14 @@ export class JobsDb {
     this.db.exec(PROVIDER_SCHEMA)
     this.db.exec(GATEWAY_SCHEMA)
     this.db.exec(TX_SCHEMA)
+    // Idempotent migrations for already-deployed DBs. SQLite throws "duplicate
+    // column" once the column exists — swallow it.
+    try {
+      this.db.exec(`ALTER TABLE gateway_jobs ADD COLUMN onChainJobId TEXT`)
+      this.db.exec(`CREATE INDEX IF NOT EXISTS gateway_jobs_onchain ON gateway_jobs(onChainJobId)`)
+    } catch {
+      // column already present
+    }
   }
 
   // ---------- transactions (shared) ----------
@@ -215,9 +228,10 @@ export class JobsDb {
   recordGatewayJob(row: GatewayJobRow): void {
     this.db
       .prepare(
-        `INSERT INTO gateway_jobs(jobId, provider, modelId, status, maxPayment, actualPayment, postedAt, ackedAt, deliveredAt, claimedAt, prompt, response, promptTokens, completionTokens, errorMessage)
-         VALUES (@jobId, @provider, @modelId, @status, @maxPayment, @actualPayment, @postedAt, @ackedAt, @deliveredAt, @claimedAt, @prompt, @response, @promptTokens, @completionTokens, @errorMessage)
+        `INSERT INTO gateway_jobs(jobId, onChainJobId, provider, modelId, status, maxPayment, actualPayment, postedAt, ackedAt, deliveredAt, claimedAt, prompt, response, promptTokens, completionTokens, errorMessage)
+         VALUES (@jobId, @onChainJobId, @provider, @modelId, @status, @maxPayment, @actualPayment, @postedAt, @ackedAt, @deliveredAt, @claimedAt, @prompt, @response, @promptTokens, @completionTokens, @errorMessage)
          ON CONFLICT(jobId) DO UPDATE SET
+           onChainJobId     = COALESCE(excluded.onChainJobId, gateway_jobs.onChainJobId),
            status           = excluded.status,
            actualPayment    = COALESCE(excluded.actualPayment, gateway_jobs.actualPayment),
            ackedAt          = COALESCE(excluded.ackedAt, gateway_jobs.ackedAt),
@@ -230,6 +244,21 @@ export class JobsDb {
            errorMessage     = COALESCE(excluded.errorMessage, gateway_jobs.errorMessage)`,
       )
       .run(row)
+  }
+
+  /** Apply a `JobClaimed(onChainJobId, _, paid)` event to whichever gateway
+   *  row tracks that on-chain job. Idempotent; safe to re-apply. */
+  applyGatewayClaim(args: {onChainJobId: string; actualPayment: string; claimedAt: number}): number {
+    const r = this.db
+      .prepare(
+        `UPDATE gateway_jobs
+            SET status        = 'claimed',
+                actualPayment = COALESCE(actualPayment, @actualPayment),
+                claimedAt     = COALESCE(claimedAt, @claimedAt)
+          WHERE onChainJobId = @onChainJobId`,
+      )
+      .run(args)
+    return r.changes
   }
 
   listGatewayJobs(opts: {sinceSeconds?: number; limit?: number} = {}): GatewayJobRow[] {

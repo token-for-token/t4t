@@ -196,6 +196,15 @@ export const jobEscrowAbi = [
       {name: 'provider', type: 'address', indexed: true},
     ],
   },
+  {
+    type: 'event',
+    name: 'JobClaimed',
+    inputs: [
+      {name: 'jobId', type: 'bytes32', indexed: true},
+      {name: 'responseHash', type: 'bytes32'},
+      {name: 'paid', type: 'uint128'},
+    ],
+  },
 ] as const
 
 export const erc20Abi = [

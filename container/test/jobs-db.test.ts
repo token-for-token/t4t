@@ -103,7 +103,7 @@ describe('JobsDb provider lifecycle', () => {
 describe('JobsDb client lifecycle', () => {
   it('persists prompts only when explicitly stored', () => {
     const db = mkDb()
-    db.recordGatewayJob({
+    db.recordGatewayJob({ onChainJobId: null,
       jobId: '0xa',
       provider: '0xprov',
       modelId: 'm',
@@ -127,14 +127,14 @@ describe('JobsDb client lifecycle', () => {
 
   it('redactGatewayPayloadsBefore replaces prompts past cutoff', () => {
     const db = mkDb()
-    db.recordGatewayJob({
+    db.recordGatewayJob({ onChainJobId: null,
       jobId: '0xa', provider: 'p', modelId: 'm', status: 'delivered',
       maxPayment: '1', actualPayment: null,
       postedAt: 100, ackedAt: null, deliveredAt: null, claimedAt: null,
       prompt: 'hi', response: 'hello',
       promptTokens: null, completionTokens: null, errorMessage: null,
     })
-    db.recordGatewayJob({
+    db.recordGatewayJob({ onChainJobId: null,
       jobId: '0xb', provider: 'p', modelId: 'm', status: 'delivered',
       maxPayment: '1', actualPayment: null,
       postedAt: 1000, ackedAt: null, deliveredAt: null, claimedAt: null,
@@ -152,14 +152,14 @@ describe('JobsDb client lifecycle', () => {
 
   it('sums total spent xBZZ', () => {
     const db = mkDb()
-    db.recordGatewayJob({
+    db.recordGatewayJob({ onChainJobId: null,
       jobId: '0x1', provider: 'p', modelId: 'm', status: 'claimed',
       maxPayment: '10', actualPayment: '7',
       postedAt: 1, ackedAt: null, deliveredAt: null, claimedAt: null,
       prompt: null, response: null,
       promptTokens: null, completionTokens: null, errorMessage: null,
     })
-    db.recordGatewayJob({
+    db.recordGatewayJob({ onChainJobId: null,
       jobId: '0x2', provider: 'p', modelId: 'm', status: 'claimed',
       maxPayment: '10', actualPayment: '5',
       postedAt: 1, ackedAt: null, deliveredAt: null, claimedAt: null,

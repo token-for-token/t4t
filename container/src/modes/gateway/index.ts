@@ -8,6 +8,7 @@ import {discoverUsableBatchId} from '../../lib/swarm'
 import {ensureManagedStamp, topUpIfBelow, type ManagedStamp} from '../../lib/stamps'
 import {privateKeyToAccount} from 'viem/accounts'
 import {ACK_WINDOW_SECONDS, cancelJob, ensureAllowance, makeChain, postJob, timeoutJob} from '../../lib/chain'
+import {jobEscrowAbi} from '../../lib/abi'
 import {ModelDiscovery} from './models'
 import {logger} from '../../lib/logger'
 import {PssTransport, uploadChunk, downloadChunk} from '../../lib/swarm'
@@ -130,6 +131,30 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
   const db = new JobsDb({path: join(cfg.T4T_DATA_DIR, 'jobs.db')})
   chain.onTx = e => db.recordTx({hash: e.hash, kind: e.kind, fromAddress: chain.address, toAddress: e.toAddress, note: e.note ?? null})
 
+  // Watch JobClaimed so the gateway's job rows record the actual paid amount
+  // (the on-chain Job struct doesn't carry it — the event is the only source).
+  // We can't filter by client (the event only indexes jobId), so we receive
+  // every JobClaimed and join by `onChainJobId` against our own rows.
+  chain.pub.watchContractEvent({
+    address: chain.escrow,
+    abi: jobEscrowAbi,
+    eventName: 'JobClaimed',
+    onLogs: logs => {
+      for (const ev of logs) {
+        const id = ev.args.jobId as Hex | undefined
+        const paid = ev.args.paid as bigint | undefined
+        if (!id || paid === undefined) continue
+        const changes = db.applyGatewayClaim({
+          onChainJobId: id,
+          actualPayment: paid.toString(),
+          claimedAt: Math.floor(Date.now() / 1000),
+        })
+        if (changes > 0) log.info({onChainJobId: id, paid: paid.toString()}, 'JobClaimed applied')
+      }
+    },
+    onError: err => log.warn({err}, 'JobClaimed watcher errored'),
+  })
+
   const pssKeyPath = cfg.T4T_PSS_KEY_PATH ?? join(cfg.T4T_DATA_DIR, 'pss.key')
   const pssKeys = loadOrCreatePssKey(pssKeyPath)
   log.info({pssKeyPath, pssPubKeyX: pssKeys.publicKeyX}, 'PSS keypair loaded')
@@ -192,6 +217,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     if (!meta) return
     db.recordGatewayJob({
       jobId: routing,
+      onChainJobId: null,
       provider: meta.provider,
       modelId: meta.modelId,
       status,
@@ -278,6 +304,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
         if (meta) {
           db.recordGatewayJob({
             jobId: body.jobId,
+            onChainJobId: null,
             provider: meta.provider,
             modelId: meta.modelId,
             status: 'acked',
@@ -306,6 +333,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
             const content = payload.openaiResponse.choices[0]?.message.content ?? ''
             db.recordGatewayJob({
               jobId: body.jobId,
+              onChainJobId: null,
               provider: meta.provider,
               modelId: meta.modelId,
               status: 'delivered',
@@ -388,6 +416,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     const promptText = req.messages.map(m => `${m.role}: ${m.content}`).join('\n')
     db.recordGatewayJob({
       jobId: jobIdRouting,
+      onChainJobId,
       provider: target.provider.owner,
       modelId: req.model,
       status: 'posted',
