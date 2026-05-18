@@ -78,7 +78,12 @@ export function layout(opts: LayoutOpts): string {
       font:13px/1.5 var(--font-mono);
       -webkit-font-smoothing:antialiased;
     }
+    /* Always fill the viewport so the tiled grid background paints to the
+       bottom even on pages with little content. background-attachment fixed
+       on its own respects body height, which can be shorter than the viewport. */
+    html{min-height:100%}
     body{
+      min-height:100vh;
       background-image:
         linear-gradient(var(--line) 1px,transparent 1px),
         linear-gradient(90deg,var(--line) 1px,transparent 1px);

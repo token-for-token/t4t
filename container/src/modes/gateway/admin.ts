@@ -182,7 +182,7 @@ function jobsPage(rows: GatewayJobRow[], spent: bigint, pending: number, payload
       <th>Posted</th><th>Max payment</th><th>Actual</th><th>Tokens (p/c)</th>
       <th>Prompt</th><th>Error</th>
     </tr></thead>
-    <tbody hx-get="/jobs/rows" hx-trigger="every 3s" hx-swap="innerHTML">
+    <tbody hx-get="/jobs/rows" hx-trigger="every 3s" hx-target="this" hx-swap="innerHTML">
       ${jobsTableBody(rows, payloads)}
     </tbody>
   </table>
@@ -213,7 +213,7 @@ function statusPage(status: Record<string, unknown>, refreshSec: number): string
   return `
 <section>
   <h2>Live status (refreshes every ${refreshSec}s)</h2>
-  <div hx-get="/status/panel" hx-trigger="every ${refreshSec}s" hx-swap="innerHTML">
+  <div hx-get="/status/panel" hx-trigger="every ${refreshSec}s" hx-target="this" hx-swap="innerHTML">
     ${statusPanels(status)}
   </div>
 </section>`

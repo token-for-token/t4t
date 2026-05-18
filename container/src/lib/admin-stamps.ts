@@ -107,7 +107,7 @@ export function renderStampsPage(cfg: StampsAdminConfig): string {
       : `This container is using a non-managed batch — buy / top-up via the Bee dashboard or set <span class="mono">T4T_STAMP_MANAGE=true</span> to let the container handle it.`}
     Top-up extends TTL (xBZZ from the Bee node's wallet). Dilute grows capacity by raising depth — it's free but halves remaining TTL per +1 depth.
   </p>
-  <div hx-get="/stamps/panel" hx-trigger="load, every 15s" hx-swap="innerHTML">
+  <div hx-get="/stamps/panel" hx-trigger="load, every 15s" hx-target="this" hx-swap="innerHTML">
     <p class="muted">Loading…</p>
   </div>
 </section>`

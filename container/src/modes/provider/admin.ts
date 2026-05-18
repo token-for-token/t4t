@@ -234,7 +234,7 @@ function jobsPage(
       <th>Job</th><th>Client</th><th>Model</th><th>Status</th>
       <th>Received</th><th>Duration</th><th>Tokens (p/c)</th><th>Earned</th><th>Error</th>
     </tr></thead>
-    <tbody hx-get="/jobs/rows" hx-trigger="every ${refreshSec}s" hx-swap="innerHTML">
+    <tbody hx-get="/jobs/rows" hx-trigger="every ${refreshSec}s" hx-target="this" hx-swap="innerHTML">
       ${jobsTableBody(rows)}
     </tbody>
   </table>
@@ -264,7 +264,7 @@ function statusPage(status: Record<string, unknown>, refreshSec: number): string
   return `
 <section>
   <h2>Live status (refreshes every ${refreshSec}s)</h2>
-  <div hx-get="/status/panel" hx-trigger="every ${refreshSec}s" hx-swap="innerHTML">
+  <div hx-get="/status/panel" hx-trigger="every ${refreshSec}s" hx-target="this" hx-swap="innerHTML">
     ${statusPanels(status)}
   </div>
 </section>`
