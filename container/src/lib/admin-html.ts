@@ -12,7 +12,7 @@ export function escape(s: unknown): string {
     .replace(/'/g, '&#39;')
 }
 
-export type TabId = 'jobs' | 'status' | 'models' | 'providers' | 'wallet'
+export type TabId = 'jobs' | 'status' | 'models' | 'providers' | 'wallet' | 'stamps'
 export interface NavTab {
   id: TabId
   href: string
@@ -25,6 +25,7 @@ export const PROVIDER_TABS: NavTab[] = [
   {id: 'jobs', href: '/', label: 'Jobs'},
   {id: 'models', href: '/models', label: 'Models'},
   {id: 'wallet', href: '/wallet', label: 'Wallet'},
+  {id: 'stamps', href: '/stamps', label: 'Stamps'},
   {id: 'status', href: '/status', label: 'Status'},
 ]
 
@@ -34,6 +35,7 @@ export const GATEWAY_TABS: NavTab[] = [
   {id: 'models', href: '/models', label: 'Models'},
   {id: 'providers', href: '/providers', label: 'Providers'},
   {id: 'wallet', href: '/wallet', label: 'Wallet'},
+  {id: 'stamps', href: '/stamps', label: 'Stamps'},
   {id: 'status', href: '/status', label: 'Status'},
 ]
 

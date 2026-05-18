@@ -16,6 +16,7 @@ import {
   shortHex,
   statusPill,
 } from '../../lib/admin-html'
+import {attachStampsAdmin, renderStampsPage} from '../../lib/admin-stamps'
 
 const HEARTBEAT_TTL = 600
 
@@ -29,6 +30,12 @@ export interface ProviderAdminDeps {
   /** Resolved postage batch ID used for every Swarm upload. Shown on the
    *  status page so the operator can confirm which stamp is active. */
   postageBatchId: string
+  /** True when T4T_STAMP_MANAGE=true and the container is auto-managing the batch. */
+  stampManaged: boolean
+  /** True when T4T_STAMP_DRY_RUN=true — disables top-up/dilute buttons. */
+  stampDryRun: boolean
+  /** Operator's intended TTL (days) — used as the default for the top-up input. */
+  stampTtlDays: number
   queue: JobQueue
   logger: Logger
   /** Live in-memory offerings map. Edits here are immediately persisted on-chain. */
@@ -91,6 +98,27 @@ export function startAdminServer(deps: ProviderAdminDeps): void {
         refreshSeconds: 0,
         active: 'models', tabs: PROVIDER_TABS,
         body: modelsPage([...deps.offerings.values()]),
+      }),
+    )
+  })
+
+  const stampsCfg = {
+    bee: deps.bee,
+    postageBatchId: deps.postageBatchId,
+    managed: deps.stampManaged,
+    dryRun: deps.stampDryRun,
+    defaultTopUpDays: deps.stampTtlDays,
+    logger: deps.logger,
+  }
+  attachStampsAdmin(app, stampsCfg)
+
+  app.get('/stamps', (_req, res) => {
+    res.send(
+      layout({
+        title: 't4t provider',
+        refreshSeconds: 0,
+        active: 'stamps', tabs: PROVIDER_TABS,
+        body: renderStampsPage(stampsCfg),
       }),
     )
   })

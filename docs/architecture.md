@@ -36,6 +36,7 @@ A two-page tour. The protocol spec lives in [`spec.md`](spec.md); this doc orien
 | Job execution (fetch → infer → upload → claim) | `container/src/modes/provider/worker.ts` |
 | Envelope sign/verify, topics, dedup | `container/src/lib/envelope.ts` |
 | bee-js wrapper (chunks + PSS) | `container/src/lib/swarm.ts` |
+| Container-managed postage stamps (buy / top-up / dilute) | `container/src/lib/stamps.ts` + `container/src/lib/admin-stamps.ts` |
 | viem chain bindings | `container/src/lib/chain.ts` |
 | ABIs | `container/src/lib/abi.ts` |
 | Payload cipher (ECIES) | `container/src/lib/crypto.ts` |
