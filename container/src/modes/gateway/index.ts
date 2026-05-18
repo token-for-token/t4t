@@ -135,11 +135,24 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
   // (the on-chain Job struct doesn't carry it — the event is the only source).
   // We can't filter by client (the event only indexes jobId), so we receive
   // every JobClaimed and join by `onChainJobId` against our own rows.
-  chain.pub.watchContractEvent({
-    address: chain.escrow,
-    abi: jobEscrowAbi,
-    eventName: 'JobClaimed',
-    onLogs: logs => {
+  //
+  // Use eth_getLogs polling, NOT viem's default eth_newFilter + getFilterChanges.
+  // Public RPCs like rpc.gnosischain.com are load-balanced/stateless and forget
+  // filter ids between requests, producing "filter not found" errors. Stateless
+  // getLogs over [last, current] survives that.
+  let lastBlock = await chain.pub.getBlockNumber().catch(() => 0n)
+  const JOB_CLAIMED_POLL_MS = 10_000
+  setInterval(async () => {
+    try {
+      const current = await chain.pub.getBlockNumber()
+      if (current <= lastBlock) return
+      const logs = await chain.pub.getContractEvents({
+        address: chain.escrow,
+        abi: jobEscrowAbi,
+        eventName: 'JobClaimed',
+        fromBlock: lastBlock + 1n,
+        toBlock: current,
+      })
       for (const ev of logs) {
         const id = ev.args.jobId as Hex | undefined
         const paid = ev.args.paid as bigint | undefined
@@ -151,9 +164,11 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
         })
         if (changes > 0) log.info({onChainJobId: id, paid: paid.toString()}, 'JobClaimed applied')
       }
-    },
-    onError: err => log.warn({err}, 'JobClaimed watcher errored'),
-  })
+      lastBlock = current
+    } catch (err) {
+      log.warn({err}, 'JobClaimed poll failed (will retry)')
+    }
+  }, JOB_CLAIMED_POLL_MS).unref()
 
   const pssKeyPath = cfg.T4T_PSS_KEY_PATH ?? join(cfg.T4T_DATA_DIR, 'pss.key')
   const pssKeys = loadOrCreatePssKey(pssKeyPath)
