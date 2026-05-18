@@ -53,10 +53,13 @@ const Common = z.object({
   // container-managed stamps — the operator owns the lifecycle.
   POSTAGE_BATCH_ID: z.string().regex(/^[0-9a-fA-F]{64}$/).optional(),
   // Container-managed postage stamps (see docs/proposal-container-managed-stamps.md).
-  // Opt-in: when true and POSTAGE_BATCH_ID is unset, the container buys a
-  // labelled batch on first boot, reuses it across restarts, and auto-tops-up
-  // when remaining TTL drops below T4T_STAMP_MIN_TTL_DAYS.
-  T4T_STAMP_MANAGE: BoolFlag.default('false'),
+  // Defaults ON: when POSTAGE_BATCH_ID is unset, the container reuses an
+  // existing labelled batch or buys one on first boot (xBZZ from the Bee
+  // node's own wallet), auto-tops-up when remaining TTL drops below
+  // T4T_STAMP_MIN_TTL_DAYS, and auto-dilutes when utilization crosses
+  // T4T_STAMP_MAX_UTILIZATION. Set to "false" if you manage the batch
+  // lifecycle yourself (e.g. via the Bee dashboard).
+  T4T_STAMP_MANAGE: BoolFlag.default('true'),
   // Default depth: 24 gives 2^(24-16) = 256 chunks/bucket (4× headroom over
   // the old default of 22). Each +1 doubles per-chunk BZZ cost — depth 24 is
   // ~4× more BZZ than 22 for the same TTL, but stays usable for >100 jobs

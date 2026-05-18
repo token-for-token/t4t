@@ -9,13 +9,51 @@ export interface SwarmClientOpts {
   logger: Logger
 }
 
+/** Returns true if the Bee error means "the postage batch ran out of bucket
+ *  capacity" (HTTP 402 with `code:402, message:"batch is overissued"`). */
+function isBatchOverissued(err: unknown): boolean {
+  const e = err as {status?: number; responseBody?: {message?: string; code?: number}} | null
+  if (!e || e.status !== 402) return false
+  const msg = e.responseBody?.message ?? ''
+  return /overissued|insufficient/i.test(msg) || e.responseBody?.code === 402
+}
+
+/** Emergency self-heal: when a Bee call fails because the batch is full,
+ *  dilute it by +1 depth (doubles bucket capacity, halves remaining TTL) and
+ *  retry the call exactly once. Logged so the operator sees the recovery.
+ *  Bee handles the dilute tx from its own wallet — we don't pay xBZZ here. */
+const EMERGENCY_DILUTE_MAX_DEPTH = 28
+async function withBatchRecovery<T>(opts: SwarmClientOpts, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    if (!isBatchOverissued(err)) throw err
+    const batches = await opts.bee.getAllPostageBatch().catch(() => [])
+    const batch = batches.find(b => b.batchID.toString() === opts.postageBatchId)
+    if (!batch) throw err
+    if (batch.depth >= EMERGENCY_DILUTE_MAX_DEPTH) {
+      opts.logger.error({batchId: opts.postageBatchId, depth: batch.depth}, 'batch overissued and at depth cap — cannot self-heal')
+      throw err
+    }
+    const newDepth = batch.depth + 1
+    opts.logger.warn(
+      {batchId: opts.postageBatchId, from: batch.depth, to: newDepth},
+      'batch overissued — emergency dilute then retry',
+    )
+    await opts.bee.diluteBatch(opts.postageBatchId, newDepth)
+    return await fn()
+  }
+}
+
 /** Upload a single chunk and return its Swarm reference (hex). */
 export async function uploadChunk(
   opts: SwarmClientOpts,
   bytes: Uint8Array,
 ): Promise<string> {
-  const {reference} = await opts.bee.uploadData(opts.postageBatchId, bytes)
-  return reference.toString()
+  return withBatchRecovery(opts, async () => {
+    const {reference} = await opts.bee.uploadData(opts.postageBatchId, bytes)
+    return reference.toString()
+  })
 }
 
 export async function downloadChunk(opts: SwarmClientOpts, reference: string): Promise<Uint8Array> {
@@ -83,12 +121,14 @@ export class PssTransport {
       throw new Error(`recipient PSS pubkey must be 32-byte X coord (got ${x.length / 2} bytes)`)
     }
     const pubKey = '02' + x
-    await this.opts.bee.pssSend(
-      this.opts.postageBatchId,
-      topic,
-      target,
-      encodeEnvelope(args.envelope),
-      pubKey,
+    await withBatchRecovery(this.opts, () =>
+      this.opts.bee.pssSend(
+        this.opts.postageBatchId,
+        topic,
+        target,
+        encodeEnvelope(args.envelope),
+        pubKey,
+      ),
     )
   }
 
