@@ -304,7 +304,7 @@ function jobsPage(
   <table>
     <thead><tr>
       <th>Job</th><th>Client</th><th>Model</th><th>Status</th>
-      <th>Received</th><th>Duration</th><th>AI tokens (p/c)</th><th>Earned</th><th>Error</th>
+      <th>Received</th><th>Duration</th><th>AI Token (input/output)</th><th>Earned xBZZ</th><th>Error</th>
     </tr></thead>
     <tbody hx-get="/jobs/rows" hx-trigger="every ${refreshSec}s" hx-target="this" hx-swap="innerHTML">
       ${jobsTableBody(rows)}

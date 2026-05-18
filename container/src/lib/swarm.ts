@@ -41,6 +41,21 @@ async function withBatchRecovery<T>(opts: SwarmClientOpts, fn: () => Promise<T>)
       'batch overissued — emergency dilute then retry',
     )
     await opts.bee.diluteBatch(opts.postageBatchId, newDepth)
+    // Bee's diluteBatch returns when the tx is SUBMITTED, not mined. The local
+    // node won't accept writes at the new depth until the tx confirms on
+    // Gnosis (~5-15s). Poll until the batch's depth actually reflects the
+    // dilute, with a 30s ceiling. Without this, the retry races the chain and
+    // hits the same 402.
+    const deadline = Date.now() + 30_000
+    while (Date.now() < deadline) {
+      const refreshed = await opts.bee.getAllPostageBatch().catch(() => [])
+      const b = refreshed.find(x => x.batchID.toString() === opts.postageBatchId)
+      if (b && b.depth >= newDepth) {
+        opts.logger.info({batchId: opts.postageBatchId, depth: b.depth}, 'dilute confirmed')
+        break
+      }
+      await new Promise(r => setTimeout(r, 1500))
+    }
     return await fn()
   }
 }

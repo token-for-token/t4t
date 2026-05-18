@@ -186,7 +186,7 @@ function jobsPage(rows: GatewayJobRow[], spent: bigint, pending: number, payload
   <table>
     <thead><tr>
       <th>Job</th><th>Provider</th><th>Model</th><th>Status</th>
-      <th>Posted</th><th>Max payment</th><th>Actual</th><th>AI tokens (p/c)</th>
+      <th>Posted</th><th>Max payment</th><th>Paid xBZZ</th><th>AI Token (input/output)</th>
       <th>Prompt</th><th>Error</th>
     </tr></thead>
     <tbody hx-get="/jobs/rows" hx-trigger="every 3s" hx-target="this" hx-swap="innerHTML">
