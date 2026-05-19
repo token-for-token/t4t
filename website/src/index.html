@@ -14,7 +14,7 @@
 
   <div class="rail">
     <div class="rail-left">
-      <span class="rail-mark">T4T // TOKEN4TOKEN</span>
+      <span class="rail-mark">T4T // TOKEN FOR TOKEN</span>
       <span>v0.1</span>
       <span>t4t.eth</span>
     </div>
@@ -90,11 +90,11 @@
       </div>
       <ol class="steps">
         <li>
-          <h3>Providers run a container.</h3>
+          <h3>Providers run inference jobs.</h3>
           <p>Anyone with a GPU and an OpenAI-compatible backend (Ollama, vLLM, llama.cpp&hellip;) runs the T4T provider container. It registers on-chain, stakes <span class="mono">xBZZ</span>, and publishes per-million-token prices for each model it serves.</p>
         </li>
         <li>
-          <h3>Gateways post jobs.</h3>
+          <h3>Gateways post inference jobs.</h3>
           <p>The gateway container exposes a normal OpenAI <span class="mono">/v1/chat/completions</span> endpoint locally. It picks a provider from the on-chain directory, escrows the maximum payment, and ships the encrypted prompt over Swarm PSS.</p>
         </li>
         <li>
@@ -156,7 +156,7 @@
 
   <footer>
     <div>
-      <div class="sig">T4T — TOKEN4TOKEN</div>
+      <div class="sig">T4T — TOKEN FOR TOKEN</div>
       <div class="sig dim"><a href="https://github.com/ffaerber/t4t" target="_blank" rel="noopener">github.com/ffaerber/t4t</a> · ENS t4t.eth · hosted on Swarm</div>
     </div>
     <div class="big">t4t.eth</div>
