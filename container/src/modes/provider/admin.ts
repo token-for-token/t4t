@@ -566,9 +566,13 @@ async function walletPage(deps: ProviderAdminDeps, query: Record<string, string>
     getProvider(deps.chain, address).catch(() => null),
   ])
   const txs = deps.db.listTransactions({limit: 100})
-  const empty = !gas || gas === 0n || !xbzz || xbzz === 0n
-  const fundingBanner = empty
-    ? `<p class="notice"><strong>Wallet needs funding.</strong> Send some <strong>xDAI</strong> (for gas) and <strong>xBZZ</strong> (for stake) to <span class="mono">${escape(address)}</span> on Gnosis to start the staking process.</p>`
+  // Post-registration the stake lives in ProviderRegistry, so an empty wallet
+  // xBZZ is normal. Only flag a banner when gas is missing — without gas the
+  // provider can't heartbeat / claim jobs / withdraw. xBZZ shortage matters
+  // only if the operator plans to top up stake.
+  const gasEmpty = !gas || gas === 0n
+  const fundingBanner = gasEmpty
+    ? `<p class="notice"><strong>Wallet needs gas.</strong> Send roughly <strong>0.5 xDAI</strong> to <span class="mono">${escape(address)}</span> on Gnosis. Without xDAI the provider can't submit heartbeats or claim jobs. Your <strong>100 xBZZ stake</strong> is locked in <span class="mono">ProviderRegistry</span> — see Provider stake below.</p>`
     : ''
   const resultBanner = renderResultBanner(query)
   return `

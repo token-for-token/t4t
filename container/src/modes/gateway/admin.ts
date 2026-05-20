@@ -462,7 +462,7 @@ async function walletPage(deps: GatewayAdminDeps, query: Record<string, string> 
   const txs = deps.db.listTransactions({limit: 100})
   const empty = !gas || gas === 0n || !xbzz || xbzz === 0n
   const fundingBanner = empty
-    ? `<p class="notice"><strong>Wallet needs funding.</strong> Send some <strong>xDAI</strong> (for gas) and <strong>xBZZ</strong> (to fund job escrows) to <span class="mono">${escape(address)}</span> on Gnosis to start posting jobs.</p>`
+    ? `<p class="notice"><strong>Wallet needs funding.</strong> Send roughly <strong>0.5 xDAI</strong> (gas — covers thousands of <code>postJob</code> txs) and <strong>5 xBZZ</strong> (job-escrow budget — roughly 5 000 small chats at default prices) to <span class="mono">${escape(address)}</span> on Gnosis. xBZZ is spent per-job (not locked); leftover can be moved out using the Send form below.</p>`
     : ''
   const resultBanner = renderResultBanner(query)
   return `
