@@ -32,7 +32,7 @@ function batch(opts: Partial<{
 }> = {}) {
   return {
     batchID: {toString: () => opts.id ?? 'a'.repeat(64)},
-    label: opts.label ?? 't4t-managed',
+    label: opts.label ?? 't4t',
     usable: opts.usable ?? true,
     depth: opts.depth ?? 22,
     amount: '0',
@@ -75,17 +75,17 @@ describe('stampWalletCostWei', () => {
 describe('pickReusable', () => {
   it('returns null when no batch matches the label', () => {
     const batches = [batch({label: 'other'}), batch({label: 'foo'})]
-    expect(pickReusable(batches, 't4t-managed', 7)).toBeNull()
+    expect(pickReusable(batches, 't4t', 7)).toBeNull()
   })
 
   it('skips batches below the min-TTL threshold', () => {
     const batches = [batch({remainingDays: 3, id: 'b'.repeat(64)})]
-    expect(pickReusable(batches, 't4t-managed', 7)).toBeNull()
+    expect(pickReusable(batches, 't4t', 7)).toBeNull()
   })
 
   it('skips unusable batches', () => {
     const batches = [batch({usable: false, remainingDays: 60})]
-    expect(pickReusable(batches, 't4t-managed', 7)).toBeNull()
+    expect(pickReusable(batches, 't4t', 7)).toBeNull()
   })
 
   it('picks the longest-TTL batch when multiple match', () => {
@@ -94,7 +94,7 @@ describe('pickReusable', () => {
       batch({id: 'b'.repeat(64), remainingDays: 60}),
       batch({id: 'c'.repeat(64), remainingDays: 30}),
     ]
-    expect(pickReusable(batches, 't4t-managed', 7)?.batchID.toString()).toBe('b'.repeat(64))
+    expect(pickReusable(batches, 't4t', 7)?.batchID.toString()).toBe('b'.repeat(64))
   })
 })
 
@@ -104,17 +104,17 @@ describe('pickToppable', () => {
       batch({id: 'a'.repeat(64), remainingDays: 1}),
       batch({id: 'b'.repeat(64), remainingDays: 3}),
     ]
-    expect(pickToppable(batches, 't4t-managed')?.batchID.toString()).toBe('b'.repeat(64))
+    expect(pickToppable(batches, 't4t')?.batchID.toString()).toBe('b'.repeat(64))
   })
 
   it('still skips unusable batches', () => {
     const batches = [batch({usable: false, remainingDays: 60})]
-    expect(pickToppable(batches, 't4t-managed')).toBeNull()
+    expect(pickToppable(batches, 't4t')).toBeNull()
   })
 })
 
 describe('ensureManagedStamp', () => {
-  const opts = {depth: 22, ttlDays: 30, minTtlDays: 7, label: 't4t-managed', dryRun: false}
+  const opts = {depth: 22, ttlDays: 30, minTtlDays: 7, label: 't4t', dryRun: false}
 
   it('reuses a healthy batch without buying', async () => {
     const id = 'a'.repeat(64)
@@ -164,7 +164,7 @@ describe('ensureManagedStamp', () => {
     const [amount, depth, options] = bee.createPostageBatch.mock.calls[0]!
     expect(amount).toBe(100n * BLOCKS_PER_DAY_GNOSIS * 30n)
     expect(depth).toBe(22)
-    expect((options as {label?: string}).label).toBe('t4t-managed')
+    expect((options as {label?: string}).label).toBe('t4t')
   })
 
   it('dry-run refuses to buy and throws', async () => {

@@ -26,7 +26,7 @@ Set these env vars (or put them in `.env`):
 | `T4T_STAMP_DEPTH` | Bee batch depth (default `22` ≈ 512MB) |
 | `T4T_STAMP_TTL_DAYS` | Target lifetime when buying (default `30`) |
 | `T4T_STAMP_MIN_TTL_DAYS` | Auto-top-up trigger when remaining TTL falls below this (default `7`) |
-| `T4T_STAMP_LABEL` | Label used to recognise t4t-managed batches (default `t4t-managed`) |
+| `T4T_STAMP_LABEL` | Label applied to managed batches (default `t4t`). The resolved batchId is persisted to `/data/postage-batch.json` so the same batch is reused across restarts. |
 | `T4T_STAMP_DRY_RUN` | `true` to log the planned tx without spending xBZZ (default `false`) |
 | `WALLET_KEY` | `0x…` (or `WALLET_KEY_FILE`) |
 | `T4T_HTTP_PORT` | `8080` |

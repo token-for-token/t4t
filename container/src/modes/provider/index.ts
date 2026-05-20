@@ -4,7 +4,8 @@ import type {ProviderConfig} from '../../lib/config'
 import {walletKeyFilePath} from '../../lib/config'
 import {startOnboardingServer, isZeroAddress} from '../../lib/onboarding'
 import {discoverUsableBatchId} from '../../lib/swarm'
-import {ensureManagedStamp, topUpIfBelow, type ManagedStamp} from '../../lib/stamps'
+import {ensureManagedStamp, hasReusableLabeledBatch, topUpIfBelow, type ManagedStamp} from '../../lib/stamps'
+import {readPersistedBatch, writePersistedBatch} from '../../lib/postage-state'
 import {privateKeyToAccount} from 'viem/accounts'
 import {
   claimJob,
@@ -66,11 +67,36 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
 
   // Resolve postage batch:
   //   1. POSTAGE_BATCH_ID env wins — operator owns the lifecycle, no auto-manage.
-  //   2. T4T_STAMP_MANAGE=true → buy or reuse a labelled batch, auto-top-up.
-  //   3. Else discover any usable batch the Bee node already has (legacy).
-  // No usable batch in any path = onboarding (phase 3).
+  //   2. Persisted file at ${T4T_DATA_DIR}/postage-batch.json — sticks to the
+  //      batch we resolved on a previous boot so multi-batch Bee nodes don't
+  //      drift to a different batch each restart. Invalidated when
+  //      T4T_STAMP_LABEL changes (treated as an explicit re-resolve signal)
+  //      or when the persisted batch is no longer usable on Bee.
+  //   3. T4T_STAMP_MANAGE=true (default) → only reuse or buy a batch labelled
+  //      T4T_STAMP_LABEL. If that fails (e.g. Bee wallet out of funds), enter
+  //      onboarding rather than silently picking a random unlabelled batch.
+  //   4. T4T_STAMP_MANAGE=false → legacy discover-any-usable-batch.
+  // No usable batch in any path = onboarding.
+  const autoManage = !cfg.POSTAGE_BATCH_ID && cfg.T4T_STAMP_MANAGE
   let managed: ManagedStamp | null = null
   let resolved: string | null = cfg.POSTAGE_BATCH_ID ?? null
+  let source: string = cfg.POSTAGE_BATCH_ID ? 'env' : 'unknown'
+  if (!resolved) {
+    const persisted = readPersistedBatch(cfg.T4T_DATA_DIR)
+    if (persisted && persisted.label === cfg.T4T_STAMP_LABEL) {
+      const stillUsable = await bee
+        .getPostageBatch(persisted.batchId)
+        .then(b => (b as unknown as {usable: boolean}).usable)
+        .catch(() => false)
+      if (stillUsable) {
+        resolved = persisted.batchId
+        source = `persisted:${persisted.source}`
+        log.info({batchId: persisted.batchId, label: persisted.label}, 'using persisted postage batch')
+      } else {
+        log.warn({batchId: persisted.batchId}, 'persisted postage batch no longer usable on Bee — re-resolving')
+      }
+    }
+  }
   if (!resolved && cfg.T4T_STAMP_MANAGE) {
     try {
       managed = await ensureManagedStamp({
@@ -85,31 +111,56 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
         },
       })
       resolved = managed.batchID
+      source = managed.source
     } catch (err) {
-      log.error({err}, 'managed stamp ensure failed; falling back to discover')
+      log.error(
+        {err, label: cfg.T4T_STAMP_LABEL},
+        'managed stamp ensure failed — refusing to fall back to an unlabelled batch',
+      )
     }
   }
-  if (!resolved) {
+  if (!resolved && !cfg.T4T_STAMP_MANAGE) {
     resolved = await discoverUsableBatchId(bee).catch(() => null)
+    if (resolved) source = 'discover'
   }
   if (!resolved) {
-    log.warn({beeUrl: cfg.BEE_API_URL}, 'no usable postage batch on Bee node — entering onboarding')
+    log.warn(
+      {beeUrl: cfg.BEE_API_URL, label: cfg.T4T_STAMP_LABEL, manage: cfg.T4T_STAMP_MANAGE},
+      'no usable postage batch — entering onboarding',
+    )
     startOnboardingServer({
       ...onboardingBase,
       stamp: {missing: true, beeUrl: cfg.BEE_API_URL},
-      recheck: async () => (await discoverUsableBatchId(bee).catch(() => null)) !== null,
+      recheck: async () => {
+        if (cfg.POSTAGE_BATCH_ID) return true
+        if (cfg.T4T_STAMP_MANAGE) {
+          return hasReusableLabeledBatch(bee, cfg.T4T_STAMP_LABEL, cfg.T4T_STAMP_MIN_TTL_DAYS)
+        }
+        return (await discoverUsableBatchId(bee).catch(() => null)) !== null
+      },
     })
     return
   }
   const postageBatchId: string = resolved
-  log.info(
-    {postageBatchId, source: cfg.POSTAGE_BATCH_ID ? 'env' : managed ? managed.source : 'bee'},
-    'postage batch resolved',
-  )
+  log.info({postageBatchId, source, label: cfg.T4T_STAMP_LABEL}, 'postage batch resolved')
 
-  // Container-managed batches get a background TTL-watch: every heartbeat
-  // interval, check remaining TTL and top up if it dropped below threshold.
-  if (managed && cfg.T4T_STAMP_MANAGE) {
+  // Persist for next boot. POSTAGE_BATCH_ID env path skips this — env is
+  // authoritative and the operator controls the lifecycle there.
+  if (!cfg.POSTAGE_BATCH_ID) {
+    try {
+      writePersistedBatch(cfg.T4T_DATA_DIR, {
+        batchId: postageBatchId,
+        label: cfg.T4T_STAMP_LABEL,
+        source,
+      })
+    } catch (err) {
+      log.warn({err}, 'failed to persist postage batch state')
+    }
+  }
+
+  // Background TTL-watch: runs whenever managed mode is on, regardless of how
+  // we resolved the batch (newly bought, persisted, or discovered).
+  if (autoManage) {
     const tickMs = cfg.T4T_HEARTBEAT_INTERVAL_SECONDS * 1000
     setInterval(() => {
       topUpIfBelow({

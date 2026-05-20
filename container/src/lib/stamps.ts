@@ -80,9 +80,10 @@ export function summariseBatch(b: BatchLike, source: ManagedStamp['source']): Ma
   }
 }
 
-/** Pick the best `t4t-managed` batch the node already owns: must be usable
- *  and have remaining TTL ≥ minTtlDays. Tiebreak by longest remaining TTL
- *  so we converge on the youngest batch when an old one is about to expire. */
+/** Pick the best batch with the configured label the node already owns: must
+ *  be usable and have remaining TTL ≥ minTtlDays. Tiebreak by longest
+ *  remaining TTL so we converge on the youngest batch when an old one is
+ *  about to expire. */
 export function pickReusable<T extends BatchLike>(
   all: T[],
   label: string,
@@ -111,6 +112,18 @@ async function listAllBatches(bee: Bee): Promise<BatchLike[]> {
   return (await bee.getAllPostageBatch()) as unknown as BatchLike[]
 }
 
+/** Read-only probe: does the Bee node already own a usable batch labelled
+ *  `label` with TTL ≥ `minTtlDays`? Used by the onboarding recheck so we don't
+ *  trigger expensive buy attempts every 10s while the operator funds the node. */
+export async function hasReusableLabeledBatch(
+  bee: Bee,
+  label: string,
+  minTtlDays: number,
+): Promise<boolean> {
+  const all = await listAllBatches(bee).catch(() => [] as BatchLike[])
+  return pickReusable(all, label, minTtlDays) !== null
+}
+
 export interface EnsureStampDeps {
   bee: Bee
   logger: Logger
@@ -131,8 +144,8 @@ export async function ensureManagedStamp(deps: EnsureStampDeps): Promise<Managed
   const reusable = pickReusable(all, opts.label, opts.minTtlDays)
   if (reusable) {
     log.info(
-      {batchID: reusable.batchID.toString(), remainingDays: reusable.duration.toDays(), depth: reusable.depth},
-      'reusing existing t4t-managed batch',
+      {batchID: reusable.batchID.toString(), label: opts.label, remainingDays: reusable.duration.toDays(), depth: reusable.depth},
+      'reusing existing labelled batch',
     )
     return summariseBatch(reusable, 'reused')
   }
@@ -147,10 +160,11 @@ export async function ensureManagedStamp(deps: EnsureStampDeps): Promise<Managed
     log.info(
       {
         batchID: toppable.batchID.toString(),
+        label: opts.label,
         amount: amount.toString(),
         walletCost: stampWalletCostWei(amount, toppable.depth).toString(),
       },
-      'topping up under-TTL t4t-managed batch instead of buying new',
+      'topping up under-TTL labelled batch instead of buying new',
     )
     await bee.topUpBatch(toppable.batchID.toString(), amount)
     const refreshed = (await listAllBatches(bee)).find(

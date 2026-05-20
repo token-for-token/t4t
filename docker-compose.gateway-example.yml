@@ -62,7 +62,7 @@ services:
       # T4T_STAMP_MIN_TTL_DAYS:    "7"               # default — auto-top-up trigger
       # T4T_STAMP_MAX_UTILIZATION: "0.5"             # default — auto-dilute trigger
       # T4T_STAMP_MAX_DEPTH:       "28"              # default — cap on auto-dilute growth
-      # T4T_STAMP_LABEL:           "t4t-managed"     # default — used to recognise managed batches
+      # T4T_STAMP_LABEL:           "t4t"             # default — labels managed batches; the resolved batchId is persisted to /data/postage-batch.json so the same batch is reused across restarts
       # T4T_STAMP_DRY_RUN:         "false"           # default — set true to log cost without spending xBZZ
       #
       # WALLET_KEY is created/imported via the admin UI on first boot.

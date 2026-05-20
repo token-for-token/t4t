@@ -67,7 +67,7 @@ const Common = z.object({
   T4T_STAMP_DEPTH: z.coerce.number().int().min(17).max(255).default(24),
   T4T_STAMP_TTL_DAYS: z.coerce.number().int().positive().default(30),
   T4T_STAMP_MIN_TTL_DAYS: z.coerce.number().int().positive().default(7),
-  T4T_STAMP_LABEL: z.string().default('t4t-managed'),
+  T4T_STAMP_LABEL: z.string().default('t4t'),
   // Auto-dilute when utilization crosses this fraction. Free in BZZ terms,
   // but halves remaining TTL per +1 depth, so combined with the TTL top-up
   // it keeps the batch usable without operator intervention.

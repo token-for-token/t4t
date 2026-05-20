@@ -11,14 +11,24 @@ import type {Hex} from './types'
  * the PSS notify carries the requestHash, but the contract addresses jobs by
  * `keccak256(chainid, escrow, client, counter)`.
  *
- * Implementation: watch `JobPosted(provider=self)`, then read `jobs[jobId]` to
- * extract the requestHash and store the reverse lookup. Bounded LRU so a
- * long-running provider doesn't leak memory.
+ * Implementation: poll `eth_getLogs` over `JobPosted(provider=self)` between
+ * the last seen block and head, then read `jobs[jobId]` to extract the
+ * requestHash and store the reverse lookup. Bounded LRU so a long-running
+ * provider doesn't leak memory.
+ *
+ * We poll getLogs rather than using viem's `watchContractEvent`, because
+ * public RPCs like rpc.gnosischain.com are load-balanced/stateless and forget
+ * filter ids between requests, breaking `eth_newFilter` + `eth_getFilterChanges`.
+ * Same rationale as the gateway's JobClaimed loop.
  */
+const POLL_INTERVAL_MS = 4_000
+
 export class JobPostedIndex {
   private readonly byRouting = new Map<Hex, Hex>()
   private readonly order: Hex[] = []
-  private unwatch?: () => void
+  private timer?: ReturnType<typeof setInterval>
+  private lastBlock = 0n
+  private polling = false
 
   constructor(
     private readonly chain: ChainClient,
@@ -28,27 +38,55 @@ export class JobPostedIndex {
   ) {}
 
   start(): void {
-    this.unwatch = this.chain.pub.watchContractEvent({
-      address: this.chain.escrow,
-      abi: jobEscrowAbi,
-      eventName: 'JobPosted',
-      args: {provider: this.provider},
-      onLogs: logs => {
-        for (const ev of logs) {
-          const jobId = ev.args.jobId as Hex | undefined
-          if (!jobId) continue
-          this.ingest(jobId).catch(err =>
-            this.log.warn({err, jobId}, 'failed to ingest JobPosted'),
-          )
-        }
-      },
-      onError: err => this.log.warn({err}, 'JobPosted watcher errored'),
-    })
+    if (this.timer) return
+    this.timer = setInterval(() => {
+      void this.poll()
+    }, POLL_INTERVAL_MS)
+    this.timer.unref?.()
   }
 
   stop(): void {
-    this.unwatch?.()
-    this.unwatch = undefined
+    if (this.timer) {
+      clearInterval(this.timer)
+      this.timer = undefined
+    }
+  }
+
+  private async poll(): Promise<void> {
+    if (this.polling) return
+    this.polling = true
+    try {
+      const current = await this.chain.pub.getBlockNumber()
+      if (this.lastBlock === 0n) {
+        // Anchor cursor to head on first successful tick — match prior
+        // watchContractEvent semantics (future events only, no backfill).
+        this.lastBlock = current
+        return
+      }
+      if (current <= this.lastBlock) return
+      const logs = await this.chain.pub.getContractEvents({
+        address: this.chain.escrow,
+        abi: jobEscrowAbi,
+        eventName: 'JobPosted',
+        args: {provider: this.provider},
+        fromBlock: this.lastBlock + 1n,
+        toBlock: current,
+      })
+      for (const ev of logs) {
+        const jobId = ev.args.jobId as Hex | undefined
+        if (!jobId) continue
+        try {
+          await this.ingest(jobId)
+        } catch (err) {
+          this.log.warn({err, jobId}, 'failed to ingest JobPosted')
+        }
+      }
+      this.lastBlock = current
+    } catch (err) {
+      this.log.warn({err}, 'JobPosted poll failed (will retry)')
+    } finally {
+      this.polling = false
+    }
   }
 
   /** Resolve a routing id (from the PSS notify) to its on-chain jobId. */
