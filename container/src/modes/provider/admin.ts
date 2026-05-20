@@ -513,7 +513,7 @@ async function walletPage(deps: ProviderAdminDeps): Promise<string> {
 <section>
   <h2>Wallet</h2>
   <dl class="kv">
-    <dt>Address</dt><dd class="mono">${escape(address)}</dd>
+    <dt>Address</dt><dd class="mono"><a href="https://gnosisscan.io/address/${escape(address)}" target="_blank" rel="noopener">${escape(address)}</a></dd>
     <dt>xDAI (gas)</dt><dd>${escape(formatXBZZ(gas as bigint | undefined ?? null))}</dd>
     <dt>xBZZ</dt><dd>${escape(formatXBZZ(xbzz as bigint | undefined ?? null))}</dd>
   </dl>
@@ -530,7 +530,7 @@ function transactionsSection(txs: import('../../lib/jobs-db').TxRow[]): string {
     <td>${escape(formatTs(t.submittedAt))}</td>
     <td>${escape(t.kind)}</td>
     <td class="mono"><a href="https://gnosisscan.io/tx/${escape(t.hash)}" target="_blank" rel="noopener">${escape(shortHex(t.hash))}</a></td>
-    <td class="mono">${escape(shortHex(t.toAddress))}</td>
+    <td class="mono"><a href="https://gnosisscan.io/address/${escape(t.toAddress)}" target="_blank" rel="noopener">${escape(shortHex(t.toAddress))}</a></td>
     <td class="muted">${escape(t.note ?? '')}</td>
   </tr>`).join('')
   return `
