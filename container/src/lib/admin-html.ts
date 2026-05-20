@@ -213,6 +213,14 @@ export function layout(opts: LayoutOpts): string {
     .err{color:var(--slash)}
     .muted{color:var(--ink-dim)}
 
+    .notice{
+      padding:12px 16px;margin:0 0 16px;
+      background:rgba(255,212,0,.08);
+      border:1px solid var(--swarm);
+      color:var(--ink);font-size:13px;
+    }
+    .notice strong{color:var(--swarm)}
+
     .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
     @media(max-width:800px){.grid2{grid-template-columns:1fr}}
 

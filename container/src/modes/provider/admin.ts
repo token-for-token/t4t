@@ -509,9 +509,14 @@ async function walletPage(deps: ProviderAdminDeps): Promise<string> {
       .catch(() => undefined),
   ])
   const txs = deps.db.listTransactions({limit: 100})
+  const empty = !gas || gas === 0n || !xbzz || xbzz === 0n
+  const banner = empty
+    ? `<p class="notice"><strong>Wallet needs funding.</strong> Send some <strong>xDAI</strong> (for gas) and <strong>xBZZ</strong> (for stake) to <span class="mono">${escape(address)}</span> on Gnosis to start the staking process.</p>`
+    : ''
   return `
 <section>
   <h2>Wallet</h2>
+  ${banner}
   <dl class="kv">
     <dt>Address</dt><dd class="mono"><a href="https://gnosisscan.io/address/${escape(address)}" target="_blank" rel="noopener">${escape(address)}</a></dd>
     <dt>xDAI (gas)</dt><dd>${escape(formatXBZZ(gas as bigint | undefined ?? null))}</dd>
