@@ -259,7 +259,7 @@ ${errBanner}
 }
 
 function savedPage(address: string): string {
-  return `<!doctype html><html><head><meta http-equiv="refresh" content="3"><title>Wallet saved</title>
+  return `<!doctype html><html><head><meta http-equiv="refresh" content="3;url=/wallet"><title>Wallet saved</title>
 <style>body{font:14px/1.4 system-ui,sans-serif;padding:32px;background:#0f1115;color:#e7eaf0}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .muted{color:#8b93a7}</style></head><body>
