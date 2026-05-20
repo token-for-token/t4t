@@ -110,6 +110,13 @@ export interface PssSubscribeArgs {
   onError?: (err: unknown) => void
 }
 
+/** Managed subscription handle. The underlying bee-js subscription may be
+ *  recreated on disconnect; `cancel` stops the reconnect loop and closes the
+ *  active subscription. */
+export interface ManagedPssSubscription {
+  cancel: () => void
+}
+
 /**
  * Thin wrapper over bee-js PSS that signs nothing and verifies everything.
  * Envelope signing happens upstream in `envelope.ts`; this layer only routes.
@@ -147,32 +154,96 @@ export class PssTransport {
     )
   }
 
-  subscribe(args: PssSubscribeArgs): PssSubscription {
+  /** Subscribe to a PSS topic with auto-reconnect on disconnect.
+   *
+   *  Bee-js delivers `onClose` / `onError` when the SSE stream backing
+   *  pssSubscribe drops (Bee restart, network blip, idle timeout). The plain
+   *  bee-js subscription does NOT auto-recover, which silently drops every
+   *  subsequent message and is the root cause of the "job_deliver never
+   *  arrived" / "provider failed to ACK" symptoms we hit when Bee or its RPC
+   *  flapped. This wrapper re-subscribes with exponential backoff (capped at
+   *  60s) and resets the backoff after 60s of stability. */
+  subscribe(args: PssSubscribeArgs): ManagedPssSubscription {
     const topic = Topic.fromString(args.topic)
-    return this.opts.bee.pssSubscribe(topic, {
-      onMessage: async msg => {
-        try {
-          const env = decodeEnvelope(msg.toUtf8())
-          const key = envelopeKey(env)
-          if (this.dedup.has(key)) return
-          if (!(await verifyEnvelope(env))) {
-            this.opts.logger.warn({from: env.from}, 'envelope signature verification failed')
-            return
+    let cancelled = false
+    let activeSub: PssSubscription | undefined
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+    let stableTimer: ReturnType<typeof setTimeout> | undefined
+    let attempt = 0
+
+    const scheduleReconnect = (reason: string): void => {
+      if (cancelled || reconnectTimer) return
+      if (stableTimer) {
+        clearTimeout(stableTimer)
+        stableTimer = undefined
+      }
+      const delay = Math.min(60_000, 500 * 2 ** attempt)
+      attempt++
+      this.opts.logger.warn({topic: args.topic, reason, delay, attempt}, 'pss reconnecting')
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = undefined
+        open()
+      }, delay)
+    }
+
+    const open = (): void => {
+      if (cancelled) return
+      activeSub = this.opts.bee.pssSubscribe(topic, {
+        onMessage: async msg => {
+          try {
+            const env = decodeEnvelope(msg.toUtf8())
+            const key = envelopeKey(env)
+            if (this.dedup.has(key)) return
+            if (!(await verifyEnvelope(env))) {
+              this.opts.logger.warn({from: env.from}, 'envelope signature verification failed')
+              return
+            }
+            this.dedup.mark(key)
+            await args.onEnvelope(env)
+          } catch (err) {
+            args.onError?.(err)
+            this.opts.logger.error({err}, 'pss decode failure')
           }
-          this.dedup.mark(key)
-          await args.onEnvelope(env)
-        } catch (err) {
+        },
+        onError: err => {
           args.onError?.(err)
-          this.opts.logger.error({err}, 'pss decode failure')
+          this.opts.logger.error({err, topic: args.topic}, 'pss subscription error')
+          scheduleReconnect('error')
+        },
+        onClose: () => {
+          this.opts.logger.warn({topic: args.topic}, 'pss subscription closed')
+          scheduleReconnect('close')
+        },
+      })
+      // Reset backoff once we've held the connection for a stable window.
+      // Without this, a long-running container that hits a flap an hour from
+      // now would jump straight to the 60s cap.
+      stableTimer = setTimeout(() => {
+        attempt = 0
+        stableTimer = undefined
+      }, 60_000)
+    }
+
+    open()
+
+    return {
+      cancel: () => {
+        cancelled = true
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer)
+          reconnectTimer = undefined
+        }
+        if (stableTimer) {
+          clearTimeout(stableTimer)
+          stableTimer = undefined
+        }
+        try {
+          activeSub?.cancel()
+        } catch {
+          // bee-js sometimes throws if cancel() is called on an already-closed
+          // subscription; harmless.
         }
       },
-      onError: err => {
-        args.onError?.(err)
-        this.opts.logger.error({err}, 'pss subscription error')
-      },
-      onClose: () => {
-        this.opts.logger.warn({topic: args.topic}, 'pss subscription closed')
-      },
-    })
+    }
   }
 }
