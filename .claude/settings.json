@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh api *)",
+      "Bash(curl -s https://api.github.com/repos/cipherdolls/core)",
+      "Bash(curl -s https://api.github.com/repos/cipherdolls/core/contents/)",
+      "Bash(curl -s \"https://api.github.com/repos/cipherdolls/core/git/trees/main?recursive=1\")",
+      "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(t['path']\\) for t in data['tree'] if t['type'] in \\('blob','tree'\\)]\")",
+      "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); paths=[t['path'] for t in data['tree']]; [print\\(p\\) for p in paths if p.startswith\\(\\('src/','test/','prisma/','docker','bunfig','tsconfig','package'\\)\\)]\")",
+      "Bash(curl -s https://raw.githubusercontent.com/cipherdolls/core/main/package.json)",
+      "Bash(curl -s https://raw.githubusercontent.com/cipherdolls/core/main/Dockerfile)",
+      "Bash(curl -s https://raw.githubusercontent.com/cipherdolls/core/main/bunfig.toml)"
+    ]
+  }
+}
