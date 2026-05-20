@@ -17,6 +17,10 @@ export interface NavTab {
   id: TabId
   href: string
   label: string
+  /** Render as a muted, non-clickable span instead of a link. Used during
+   *  onboarding to keep the nav visually consistent with normal mode while
+   *  signalling that the tab isn't reachable yet. */
+  disabled?: boolean
 }
 
 /** Default tab set for the provider admin (no "Providers" — provider doesn't
@@ -52,7 +56,9 @@ export interface LayoutOpts {
 export function layout(opts: LayoutOpts): string {
   const tabs = opts.tabs ?? GATEWAY_TABS
   const tab = (t: NavTab) =>
-    `<a href="${t.href}" class="${opts.active === t.id ? 'active' : ''}">${escape(t.label)}</a>`
+    t.disabled
+      ? `<span class="disabled">${escape(t.label)}</span>`
+      : `<a href="${t.href}" class="${opts.active === t.id ? 'active' : ''}">${escape(t.label)}</a>`
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -118,6 +124,13 @@ export function layout(opts: LayoutOpts): string {
     }
     header nav a:hover{color:var(--ink);background:var(--bg-elev)}
     header nav a.active{color:var(--ink);background:var(--bg-elev);box-shadow:inset 0 -2px 0 var(--xbzz)}
+    header nav span.disabled{
+      color:var(--ink-faint);padding:0 18px;display:inline-flex;align-items:center;
+      font-family:var(--font-display);font-size:11px;font-weight:700;
+      letter-spacing:.1em;text-transform:uppercase;
+      border-right:1px solid var(--line-strong);
+      cursor:not-allowed;opacity:.5;
+    }
     header .pulse-flag{
       margin-left:auto;align-self:center;display:inline-flex;align-items:center;gap:8px;
       font-family:var(--font-display);font-size:10px;letter-spacing:.12em;

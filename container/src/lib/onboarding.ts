@@ -1,7 +1,7 @@
 import express from 'express'
 import {privateKeyToAccount} from 'viem/accounts'
 import type {Logger} from './logger'
-import {escape, layout, type NavTab} from './admin-html'
+import {escape, layout, GATEWAY_TABS, PROVIDER_TABS, type NavTab} from './admin-html'
 import {
   newMnemonic,
   isMnemonic,
@@ -10,10 +10,13 @@ import {
   saveWalletKey,
 } from './wallet'
 
-// Onboarding mode only serves /wallet — all other admin routes are
-// registered by the post-onboarding admin servers. Render just the wallet tab
-// so the operator doesn't get 404s clicking Jobs/Status/Models.
-const ONBOARDING_TABS: NavTab[] = [{id: 'wallet', href: '/wallet', label: 'Wallet'}]
+// Render the full role-appropriate nav during onboarding too, with non-wallet
+// tabs marked disabled — keeps the layout visually consistent with normal mode
+// and prevents 404s when the operator clicks a tab that isn't wired up yet.
+function onboardingTabs(role: string): NavTab[] {
+  const base = role === 'provider' ? PROVIDER_TABS : GATEWAY_TABS
+  return base.map(t => (t.id === 'wallet' ? t : {...t, disabled: true}))
+}
 
 export interface OnboardingDeps {
   /** 'gateway' | 'provider' — only affects display copy. */
@@ -65,7 +68,7 @@ export function startOnboardingServer(deps: OnboardingDeps): void {
       layout({
         title: `t4t ${deps.role} — setup`,
         refreshSeconds: 10,
-        active: 'wallet', tabs: ONBOARDING_TABS,
+        active: 'wallet', tabs: onboardingTabs(deps.role),
         body: onboardingPage(deps, null, null),
       }),
     )
@@ -78,7 +81,7 @@ export function startOnboardingServer(deps: OnboardingDeps): void {
       layout({
         title: `t4t ${deps.role} — setup`,
         refreshSeconds: 0,
-        active: 'wallet', tabs: ONBOARDING_TABS,
+        active: 'wallet', tabs: onboardingTabs(deps.role),
         body: onboardingPage(deps, mnemonic, null),
       }),
     )
@@ -92,7 +95,7 @@ export function startOnboardingServer(deps: OnboardingDeps): void {
         layout({
           title: `t4t ${deps.role} — setup`,
           refreshSeconds: 0,
-          active: 'wallet', tabs: ONBOARDING_TABS,
+          active: 'wallet', tabs: onboardingTabs(deps.role),
           body: onboardingPage(deps, null, 'Invalid mnemonic — generate or import again.'),
         }),
       )
@@ -120,7 +123,7 @@ export function startOnboardingServer(deps: OnboardingDeps): void {
         layout({
           title: `t4t ${deps.role} — setup`,
           refreshSeconds: 0,
-          active: 'wallet', tabs: ONBOARDING_TABS,
+          active: 'wallet', tabs: onboardingTabs(deps.role),
           body: onboardingPage(deps, null, `Import failed: ${err instanceof Error ? err.message : String(err)}`),
         }),
       )
