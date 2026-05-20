@@ -1,7 +1,8 @@
 import express from 'express'
+import {parseUnits, type Address} from 'viem'
 import type {Bee} from '@ethersphere/bee-js'
 import type {ChainClient} from '../../lib/chain'
-import {getProvider} from '../../lib/chain'
+import {deactivateProvider, getProvider, sendXbzz, sendXdai, withdrawStake} from '../../lib/chain'
 import type {JobsDb, ProviderJobRow} from '../../lib/jobs-db'
 import type {Logger} from '../../lib/logger'
 import type {ModelOffering} from '../../lib/types'
@@ -11,6 +12,7 @@ import {
   formatDuration,
   formatTs,
   formatXBZZ,
+  formatXdai,
   layout,
   parseBzzToPlur,
   PROVIDER_TABS,
@@ -126,15 +128,69 @@ export function startAdminServer(deps: ProviderAdminDeps): void {
     )
   })
 
-  app.get('/wallet', async (_req, res) => {
+  app.get('/wallet', async (req, res) => {
     res.send(
       layout({
         title: 't4t provider',
         refreshSeconds: deps.statusRefreshSeconds,
         active: 'wallet', tabs: PROVIDER_TABS,
-        body: await walletPage(deps),
+        body: await walletPage(deps, req.query as Record<string, string>),
       }),
     )
+  })
+
+  app.post('/wallet/send', express.urlencoded({extended: false}), async (req, res) => {
+    const body = req.body as {token?: string; to?: string; amount?: string}
+    const token = body.token === 'xbzz' ? 'xbzz' : 'xdai'
+    const to = (body.to ?? '').trim()
+    const amountStr = (body.amount ?? '').trim()
+    if (!/^0x[0-9a-fA-F]{40}$/.test(to)) {
+      return res.redirect('/wallet?error=' + encodeURIComponent('invalid recipient address'))
+    }
+    let amountWei: bigint
+    try {
+      amountWei = parseUnits(amountStr, token === 'xdai' ? 18 : 16)
+    } catch {
+      return res.redirect('/wallet?error=' + encodeURIComponent('invalid amount'))
+    }
+    if (amountWei <= 0n) {
+      return res.redirect('/wallet?error=' + encodeURIComponent('amount must be > 0'))
+    }
+    try {
+      const hash = token === 'xdai'
+        ? await sendXdai(deps.chain, to as Address, amountWei)
+        : await sendXbzz(deps.chain, to as Address, amountWei)
+      deps.logger.info({token, to, amountWei: amountWei.toString(), hash}, 'wallet send submitted')
+      return res.redirect(`/wallet?sent=${hash}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      deps.logger.warn({err, token, to}, 'wallet send failed')
+      return res.redirect('/wallet?error=' + encodeURIComponent(msg))
+    }
+  })
+
+  app.post('/wallet/deactivate', async (_req, res) => {
+    try {
+      const hash = await deactivateProvider(deps.chain)
+      deps.logger.info({hash}, 'provider deactivate submitted')
+      return res.redirect(`/wallet?deactivated=${hash}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      deps.logger.warn({err}, 'provider deactivate failed')
+      return res.redirect('/wallet?error=' + encodeURIComponent(msg))
+    }
+  })
+
+  app.post('/wallet/withdraw-stake', async (_req, res) => {
+    try {
+      const hash = await withdrawStake(deps.chain)
+      deps.logger.info({hash}, 'withdraw stake submitted')
+      return res.redirect(`/wallet?withdrew=${hash}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      deps.logger.warn({err}, 'withdraw stake failed')
+      return res.redirect('/wallet?error=' + encodeURIComponent(msg))
+    }
   })
 
   app.post('/models/:modelId/price', express.urlencoded({extended: false}), async (req, res) => {
@@ -371,7 +427,7 @@ function statusPanels(s: Record<string, unknown>): string {
       <dt>RPC URL</dt><dd>${escape(chain?.url ?? '')}</dd>
       <dt>Chain id</dt><dd>${escape(chain?.chainId ?? '—')}</dd>
       <dt>Block</dt><dd>${escape(chain?.block?.toString() ?? '—')}</dd>
-      <dt>xDAI (gas)</dt><dd>${escape(formatXBZZ(chain?.gasBalance ?? null))}</dd>
+      <dt>xDAI (gas)</dt><dd>${escape(formatXdai(chain?.gasBalance ?? null))}</dd>
       <dt>xBZZ balance</dt><dd>${escape(formatXBZZ(chain?.xbzzBalance ?? null))}</dd>
     </dl>
   </section>
@@ -487,9 +543,9 @@ async function collectStatus(deps: ProviderAdminDeps): Promise<Record<string, un
   }
 }
 
-async function walletPage(deps: ProviderAdminDeps): Promise<string> {
+async function walletPage(deps: ProviderAdminDeps, query: Record<string, string> = {}): Promise<string> {
   const address = deps.chain.address
-  const [gas, xbzz] = await Promise.all([
+  const [gas, xbzz, provider] = await Promise.all([
     deps.chain.pub.getBalance({address}).catch(() => undefined),
     deps.chain.pub
       .readContract({
@@ -507,24 +563,81 @@ async function walletPage(deps: ProviderAdminDeps): Promise<string> {
         args: [address],
       })
       .catch(() => undefined),
+    getProvider(deps.chain, address).catch(() => null),
   ])
   const txs = deps.db.listTransactions({limit: 100})
   const empty = !gas || gas === 0n || !xbzz || xbzz === 0n
-  const banner = empty
+  const fundingBanner = empty
     ? `<p class="notice"><strong>Wallet needs funding.</strong> Send some <strong>xDAI</strong> (for gas) and <strong>xBZZ</strong> (for stake) to <span class="mono">${escape(address)}</span> on Gnosis to start the staking process.</p>`
     : ''
+  const resultBanner = renderResultBanner(query)
   return `
 <section>
   <h2>Wallet</h2>
-  ${banner}
+  ${resultBanner}
+  ${fundingBanner}
   <dl class="kv">
     <dt>Address</dt><dd class="mono"><a href="https://gnosisscan.io/address/${escape(address)}" target="_blank" rel="noopener">${escape(address)}</a></dd>
-    <dt>xDAI (gas)</dt><dd>${escape(formatXBZZ(gas as bigint | undefined ?? null))}</dd>
+    <dt>xDAI (gas)</dt><dd>${escape(formatXdai(gas as bigint | undefined ?? null))}</dd>
     <dt>xBZZ</dt><dd>${escape(formatXBZZ(xbzz as bigint | undefined ?? null))}</dd>
   </dl>
   <p class="muted">Private key is stored at <span class="mono">/data/wallet.key</span> (bind-mounted from the host). To replace it, delete that file and restart — the onboarding UI will reappear.</p>
 </section>
+${sendFundsSection()}
+${providerStakeSection(provider)}
 ${transactionsSection(txs)}`
+}
+
+function renderResultBanner(query: Record<string, string>): string {
+  if (query.error) return `<p class="notice err"><strong>Error:</strong> ${escape(query.error)}</p>`
+  const txHash = query.sent || query.deactivated || query.withdrew
+  if (!txHash) return ''
+  const label = query.sent ? 'Send' : query.deactivated ? 'Deactivate' : 'Withdraw'
+  return `<p class="notice"><strong>${label} submitted.</strong> tx <a class="mono" href="https://gnosisscan.io/tx/${escape(txHash)}" target="_blank" rel="noopener">${escape(shortHex(txHash))}</a></p>`
+}
+
+function sendFundsSection(): string {
+  return `
+<section>
+  <h2>Send funds</h2>
+  <form method="post" action="/wallet/send" onsubmit="return confirm('Send funds from this wallet?')">
+    <div class="kv" style="grid-template-columns:max-content 1fr;gap:8px 12px;margin-bottom:8px;align-items:center">
+      <label>Token</label>
+      <select name="token" style="width:auto;padding:8px;background:var(--bg-deeper);border:1px solid var(--line-strong);color:var(--ink);font:13px/1.5 var(--font-mono)">
+        <option value="xdai">xDAI</option>
+        <option value="xbzz">xBZZ</option>
+      </select>
+      <label>To</label>
+      <input type="text" name="to" placeholder="0x…" required pattern="0x[0-9a-fA-F]{40}">
+      <label>Amount</label>
+      <input type="text" name="amount" placeholder="1.5" required>
+    </div>
+    <button type="submit">Send</button>
+  </form>
+  <p class="muted" style="margin-top:8px">Amount is in token units (e.g. "1.5" = 1.5 xDAI or 1.5 xBZZ). Submits a tx signed by this wallet.</p>
+</section>`
+}
+
+function providerStakeSection(p: {active: boolean; stake: bigint} | null): string {
+  if (!p) return ''
+  const active = p.active
+  return `
+<section>
+  <h2>Provider stake</h2>
+  <dl class="kv">
+    <dt>Status</dt><dd class="${active ? 'ok' : 'warn'}">${active ? 'active' : 'inactive — stake withdrawable after unbonding'}</dd>
+    <dt>Stake</dt><dd>${escape(formatXBZZ(p.stake))} xBZZ</dd>
+  </dl>
+  <div style="display:flex;gap:8px;margin-top:8px">
+    <form method="post" action="/wallet/deactivate" onsubmit="return confirm('Deactivate this provider? Stake becomes withdrawable after the unbonding period.')">
+      <button type="submit" ${active ? '' : 'disabled'}>Deactivate</button>
+    </form>
+    <form method="post" action="/wallet/withdraw-stake" onsubmit="return confirm('Withdraw stake to wallet? Only succeeds after the unbonding period elapses.')">
+      <button type="submit" ${active ? 'disabled' : ''}>Withdraw stake</button>
+    </form>
+  </div>
+  <p class="muted" style="margin-top:8px">Deactivate first (stops accepting new jobs, begins unbonding). After the on-chain unbonding period, Withdraw returns the stake to this wallet.</p>
+</section>`
 }
 
 function transactionsSection(txs: import('../../lib/jobs-db').TxRow[]): string {

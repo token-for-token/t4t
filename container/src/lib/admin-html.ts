@@ -351,19 +351,27 @@ export function shortHex(h: string, len = 10): string {
   return h.length <= len + 2 ? h : `${h.slice(0, 6)}…${h.slice(-4)}`
 }
 
-// xBZZ has 16 decimals on Gnosis (NOT 18). Also used for xDAI/wei display below
-// even though xDAI is 18 — this is a quick approximation acceptable for the
-// admin UI's "rough balance" view, not for financial calculations.
+// xBZZ has 16 decimals on Gnosis (NOT 18). xDAI uses native 18.
 const XBZZ_DECIMALS = 16n
-export function formatXBZZ(weiStr: string | bigint | null | undefined): string {
+const XDAI_DECIMALS = 18n
+
+function formatWei(weiStr: string | bigint | null | undefined, decimals: bigint): string {
   if (weiStr === null || weiStr === undefined) return '—'
   const wei = typeof weiStr === 'bigint' ? weiStr : BigInt(weiStr)
-  const scale = 10n ** XBZZ_DECIMALS
+  const scale = 10n ** decimals
   const whole = wei / scale
   const frac = wei % scale
   if (frac === 0n) return `${whole}`
   const fracStr = (frac + scale).toString().slice(1).replace(/0+$/, '')
   return `${whole}.${fracStr.slice(0, 6)}`
+}
+
+export function formatXBZZ(weiStr: string | bigint | null | undefined): string {
+  return formatWei(weiStr, XBZZ_DECIMALS)
+}
+
+export function formatXdai(weiStr: string | bigint | null | undefined): string {
+  return formatWei(weiStr, XDAI_DECIMALS)
 }
 
 /** Parse a decimal-BZZ string (e.g. "0.3", "1.5", "0") into PLUR (raw wei).

@@ -146,6 +146,32 @@ export async function withdrawStake(c: ChainClient): Promise<Hex> {
   return hash
 }
 
+/** Send native xDAI (Gnosis gas token) from this wallet to an arbitrary recipient. */
+export async function sendXdai(c: ChainClient, to: Address, amountWei: bigint): Promise<Hex> {
+  const hash = await c.wallet.sendTransaction({
+    chain: c.wallet.chain!,
+    account: c.wallet.account!,
+    to,
+    value: amountWei,
+  })
+  emit(c, {kind: 'sendXdai', hash, toAddress: to, note: amountWei.toString()})
+  return hash
+}
+
+/** Send xBZZ ERC20 from this wallet to an arbitrary recipient. */
+export async function sendXbzz(c: ChainClient, to: Address, amountWei: bigint): Promise<Hex> {
+  const hash = await c.wallet.writeContract({
+    chain: c.wallet.chain!,
+    account: c.wallet.account!,
+    address: c.xbzz,
+    abi: erc20Abi,
+    functionName: 'transfer',
+    args: [to, amountWei],
+  })
+  emit(c, {kind: 'sendXbzz', hash, toAddress: to, note: amountWei.toString()})
+  return hash
+}
+
 export async function readMinStake(c: ChainClient): Promise<bigint> {
   return (await c.pub.readContract({
     address: c.registry,
