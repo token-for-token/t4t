@@ -69,7 +69,7 @@ describe('InferenceRouter.listModels', () => {
     expect(log.warn).not.toHaveBeenCalled()
   })
 
-  it('keeps the first endpoint on collisions and warns', async () => {
+  it('exposes both endpoints with a name prefix when they advertise the same model', async () => {
     mockFetch(url => {
       if (url === 'http://a/v1/models') return jsonResponse({data: [{id: 'llama3'}]})
       if (url === 'http://b/v1/models') return jsonResponse({data: [{id: 'llama3'}, {id: 'extra'}]})
@@ -81,13 +81,43 @@ describe('InferenceRouter.listModels', () => {
       log as never,
     )
     const models = await router.listModels()
-    expect(models.sort()).toEqual(['extra', 'llama3'])
-    expect(router.endpointFor('llama3')).toBe('a')
+    expect(models.sort()).toEqual(['a/llama3', 'b/llama3', 'extra'])
+    expect(router.endpointFor('a/llama3')).toBe('a')
+    expect(router.endpointFor('b/llama3')).toBe('b')
     expect(router.endpointFor('extra')).toBe('b')
-    expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({modelId: 'llama3', kept: 'a', ignored: 'b'}),
-      expect.stringMatching(/first-listed endpoint wins/),
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({modelId: 'llama3', endpoints: ['a', 'b']}),
+      expect.stringMatching(/multiple endpoints/),
     )
+  })
+
+  it('rewrites the model field to the backend-native id when invoking a prefixed model', async () => {
+    mockFetch(url => {
+      if (url === 'http://a/v1/models') return jsonResponse({data: [{id: 'llama3'}]})
+      if (url === 'http://b/v1/models') return jsonResponse({data: [{id: 'llama3'}]})
+      if (url === 'http://b/v1/chat/completions') {
+        return jsonResponse({
+          id: 'r',
+          object: 'chat.completion',
+          created: 0,
+          model: 'llama3',
+          choices: [{index: 0, message: {role: 'assistant', content: 'hi'}, finish_reason: 'stop'}],
+        })
+      }
+      throw new Error(`unexpected url ${url}`)
+    })
+    const router = new InferenceRouter(
+      [new InferenceClient('a', 'http://a'), new InferenceClient('b', 'http://b')],
+      silentLogger() as never,
+    )
+    await router.listModels()
+
+    await router.chatCompletion({model: 'b/llama3', messages: [{role: 'user', content: 'hi'}]})
+
+    const chatCall = calls.find(c => c.url.endsWith('/v1/chat/completions'))!
+    expect(chatCall.url).toBe('http://b/v1/chat/completions')
+    const body = JSON.parse(chatCall.init!.body as string) as {model: string}
+    expect(body.model).toBe('llama3')
   })
 
   it('skips endpoints whose listModels throws, keeps the rest live', async () => {

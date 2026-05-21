@@ -377,7 +377,7 @@ With `T4T_FAKE_STREAMING=false`: 400.
 Additional env:
 | Variable | Default | Description |
 |---|---|---|
-| `T4T_ENDPOINTS_FILE` | `${T4T_DATA_DIR}/endpoints.json` | Path to a JSON array of `{name, url, apiKey?}` entries describing every OpenAI-compatible inference backend the provider routes to (Ollama, vLLM, LiteLLM, llama.cpp, OpenAI, …). At least one entry required. First endpoint to advertise a given model id wins on collision (later collisions are logged and ignored). |
+| `T4T_ENDPOINTS_FILE` | `${T4T_DATA_DIR}/endpoints.json` | Path to a JSON array of `{name, url, apiKey?}` entries describing every OpenAI-compatible inference backend the provider routes to (Ollama, vLLM, LiteLLM, llama.cpp, OpenAI, …). At least one entry required. If two backends advertise the same model id, each is registered on-chain as `<endpoint-name>/<modelId>` so the operator can publish independent prices; the provider rewrites `model` to the backend-native id before calling out. Models served by a single backend keep their bare id. |
 | `T4T_INPUT_PRICE_DEFAULT` | required | xBZZ wei per 1M prompt tokens, applied to newly-discovered models only. Per-model prices live on-chain in `ModelOffering.inputPricePerMillionTokens` and are editable from the admin UI. |
 | `T4T_OUTPUT_PRICE_DEFAULT` | required | xBZZ wei per 1M completion tokens, same semantics as the input default. |
 | `T4T_HEARTBEAT_INTERVAL_SECONDS` | `300` | |

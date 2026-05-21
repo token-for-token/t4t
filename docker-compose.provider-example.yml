@@ -11,7 +11,10 @@
 #          {"name": "openai", "url": "https://api.openai.com", "apiKey": "sk-..."}
 #        ]
 #      At least one backend must be reachable and serving models on /v1/models.
-#      If two backends advertise the same model id, the first listed wins.
+#      If two backends advertise the same model id, each is exposed (and
+#      registered on-chain) as `<endpoint-name>/<modelId>` — e.g. `ollama/llama3`
+#      and `openai/llama3` — so the operator can price them independently.
+#      Models served by a single backend keep their bare id.
 #   3. `docker compose up -d`
 #   4. Open http://localhost:3000/wallet → Generate or import a wallet
 #   5. Fund the new address with xDAI (gas) and ≥ 100 xBZZ (stake)

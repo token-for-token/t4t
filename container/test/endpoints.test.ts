@@ -65,6 +65,14 @@ describe('loadEndpoints', () => {
     expect(() => loadEndpoints(dir)).toThrow(EndpointsFileError)
   })
 
+  it('rejects names containing a slash', () => {
+    writeFileSync(
+      join(dir, 'endpoints.json'),
+      JSON.stringify([{name: 'open/ai', url: 'http://a:1'}]),
+    )
+    expect(() => loadEndpoints(dir)).toThrow(/must not contain/)
+  })
+
   it('rejects duplicate names', () => {
     writeFileSync(
       join(dir, 'endpoints.json'),

@@ -29,7 +29,9 @@ Create `data/provider/endpoints.json` listing every OpenAI-compatible backend th
 ]
 ```
 
-`name` is a label that appears in logs. `url` is the base URL — `/v1/chat/completions` and `/v1/models` are appended at call time, so don't include them here. `apiKey` is optional (omit for Ollama; required for OpenAI / vLLM-with-`--api-key`). If two backends advertise the same model id, the first listed wins and the collision is logged.
+`name` is a short label (no `/`) that appears in logs and acts as the disambiguation prefix when two backends serve the same model id. `url` is the base URL — `/v1/chat/completions` and `/v1/models` are appended at call time, so don't include them here. `apiKey` is optional (omit for Ollama; required for OpenAI / vLLM-with-`--api-key`).
+
+If two backends advertise the same model id (e.g. both Ollama and OpenAI serve `llama3`), the provider registers each one on-chain under `<endpoint-name>/<modelId>` — so `ollama/llama3` and `openai/llama3` become two distinct offerings, each with its own price (editable on the Models page). Clients then request whichever flavour they want. Models served by a single backend keep their bare id.
 
 Override the path with `T4T_ENDPOINTS_FILE`.
 

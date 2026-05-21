@@ -4,8 +4,10 @@ import {join} from 'node:path'
 
 const EndpointSchema = z.object({
   // Operator-visible label; appears in logs ("endpoint=openai listModels failed").
-  // Must be unique across the list — used as the routing key in collision warnings.
-  name: z.string().min(1),
+  // Must be unique across the list — also used as the prefix when two endpoints
+  // advertise the same model id (registered on-chain as `<name>/<modelId>`).
+  // `/` is forbidden so the prefix split is unambiguous.
+  name: z.string().min(1).regex(/^[^/]+$/, 'endpoint name must not contain "/"'),
   // Base URL of an OpenAI-compatible HTTP API. /v1/chat/completions and /v1/models
   // are appended at call time, so don't include them here.
   url: z.string().url(),
