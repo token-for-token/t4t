@@ -99,6 +99,26 @@ export function writeEndpoints(dataDir: string, endpoints: InferenceEndpoint[]):
   renameSync(tmp, path)
 }
 
+/** Update an endpoint's `models` block with a single (backendModelId, price)
+ *  pair. Returns true if the entry was new or changed, false if the existing
+ *  entry already matched. Mutates the passed endpoint. */
+export function setDeclaredPrice(
+  endpoint: InferenceEndpoint,
+  backendModelId: string,
+  inputPlur: bigint,
+  outputPlur: bigint,
+): boolean {
+  endpoint.models = endpoint.models ?? {}
+  const next: ModelPriceEntry = {
+    inputBzz: plurToBzzExact(inputPlur),
+    outputBzz: plurToBzzExact(outputPlur),
+  }
+  const cur = endpoint.models[backendModelId]
+  if (cur && cur.inputBzz === next.inputBzz && cur.outputBzz === next.outputBzz) return false
+  endpoint.models[backendModelId] = next
+  return true
+}
+
 /** Reverse of `parseBzzToPlur` — render a PLUR bigint as a non-lossy BZZ
  *  decimal string. Suitable for round-tripping a UI edit back into JSON
  *  (unlike `formatXBZZ`, which truncates to 6 fractional digits for display). */

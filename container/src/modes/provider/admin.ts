@@ -8,7 +8,7 @@ import type {Logger} from '../../lib/logger'
 import type {ModelOffering} from '../../lib/types'
 import type {JobQueue} from './listener'
 import type {InferenceEndpoint} from '../../lib/endpoints'
-import {plurToBzzExact, writeEndpoints} from '../../lib/endpoints'
+import {setDeclaredPrice, writeEndpoints} from '../../lib/endpoints'
 import type {InferenceRouter} from '../../lib/inference'
 import {
   escape,
@@ -263,11 +263,7 @@ function mirrorPriceToFile(
   if (!route) return
   const endpoint = deps.endpoints.find(e => e.name === route.endpointName)
   if (!endpoint) return
-  endpoint.models = endpoint.models ?? {}
-  endpoint.models[route.backendModelId] = {
-    inputBzz: plurToBzzExact(inputPlur),
-    outputBzz: plurToBzzExact(outputPlur),
-  }
+  if (!setDeclaredPrice(endpoint, route.backendModelId, inputPlur, outputPlur)) return
   writeEndpoints(deps.dataDir, deps.endpoints)
 }
 

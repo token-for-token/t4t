@@ -7,7 +7,9 @@ import {
   endpointsFilePath,
   loadEndpoints,
   plurToBzzExact,
+  setDeclaredPrice,
   writeEndpoints,
+  type InferenceEndpoint,
 } from '../src/lib/endpoints'
 
 let dir: string
@@ -158,6 +160,36 @@ describe('writeEndpoints', () => {
     expect(raw.endsWith('\n')).toBe(true)
     expect(JSON.parse(raw)).toEqual(value)
     expect(loadEndpoints(dir)).toEqual(value)
+  })
+})
+
+describe('setDeclaredPrice', () => {
+  it('initializes the models block and reports a change', () => {
+    const ep: InferenceEndpoint = {name: 'ollama', url: 'http://ollama:11434'}
+    const changed = setDeclaredPrice(ep, 'llama3', 3_000_000_000_000_000n, 15_000_000_000_000_000n)
+    expect(changed).toBe(true)
+    expect(ep.models).toEqual({llama3: {inputBzz: '0.3', outputBzz: '1.5'}})
+  })
+
+  it('returns false when the existing entry already matches', () => {
+    const ep: InferenceEndpoint = {
+      name: 'ollama',
+      url: 'http://ollama:11434',
+      models: {llama3: {inputBzz: '0.3', outputBzz: '1.5'}},
+    }
+    const changed = setDeclaredPrice(ep, 'llama3', 3_000_000_000_000_000n, 15_000_000_000_000_000n)
+    expect(changed).toBe(false)
+  })
+
+  it('overwrites a divergent existing entry', () => {
+    const ep: InferenceEndpoint = {
+      name: 'ollama',
+      url: 'http://ollama:11434',
+      models: {llama3: {inputBzz: '0.1', outputBzz: '0.2'}},
+    }
+    const changed = setDeclaredPrice(ep, 'llama3', 3_000_000_000_000_000n, 15_000_000_000_000_000n)
+    expect(changed).toBe(true)
+    expect(ep.models!.llama3).toEqual({inputBzz: '0.3', outputBzz: '1.5'})
   })
 })
 

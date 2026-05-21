@@ -27,7 +27,14 @@ import {EciesCipher} from '../../lib/crypto'
 import {JobPostedIndex} from '../../lib/job-index'
 import {JobsDb} from '../../lib/jobs-db'
 import {InferenceClient, InferenceRouter} from '../../lib/inference'
-import {EndpointsFileError, endpointsFilePath, loadEndpoints, type InferenceEndpoint} from '../../lib/endpoints'
+import {
+  EndpointsFileError,
+  endpointsFilePath,
+  loadEndpoints,
+  setDeclaredPrice,
+  writeEndpoints,
+  type InferenceEndpoint,
+} from '../../lib/endpoints'
 import {parseBzzToPlur} from '../../lib/admin-html'
 import {loadOrCreatePssKey} from '../../lib/keys'
 import type {Hex, ModelOffering} from '../../lib/types'
@@ -302,6 +309,41 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
   const offeringsByModel = new Map<string, ModelOffering>()
   for (const modelId of modelIds) offeringsByModel.set(modelId, resolveOffering(modelId))
 
+  // Reflects the live offerings map back into endpoints.json so the file is
+  // always a complete inventory of what the provider serves — even for models
+  // first discovered from `/v1/models` with env-default prices. No-op when the
+  // file already matches.
+  function syncEndpointsFile(): void {
+    let dirty = false
+    for (const [exposedId, offering] of offeringsByModel) {
+      const route = inference.routeFor(exposedId)
+      if (!route) continue
+      const endpoint = endpoints.find(e => e.name === route.endpointName)
+      if (!endpoint) continue
+      if (
+        setDeclaredPrice(
+          endpoint,
+          route.backendModelId,
+          offering.inputPricePerMillionTokens,
+          offering.outputPricePerMillionTokens,
+        )
+      ) {
+        dirty = true
+      }
+    }
+    if (!dirty) return
+    try {
+      writeEndpoints(cfg.T4T_DATA_DIR, endpoints)
+      log.info('endpoints.json synced with current offerings')
+    } catch (err) {
+      log.warn({err}, 'failed to sync endpoints.json with current offerings')
+    }
+  }
+
+  // First-run sync: writes any newly-discovered models (with their resolved
+  // prices) into the file so operators can see everything in one place.
+  syncEndpointsFile()
+
   async function publishOfferings(): Promise<void> {
     const arr = [...offeringsByModel.values()]
     if (arr.length === 0) {
@@ -385,6 +427,7 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
         offeringsByModel.clear()
         for (const [k, v] of next) offeringsByModel.set(k, v)
         log.info({models: [...offeringsByModel.keys()]}, 'offerings re-published after backend change')
+        syncEndpointsFile()
       } catch (err) {
         log.warn({err}, 'updateOfferings failed; keeping previous on-chain set')
       }

@@ -21,8 +21,9 @@
 #        ]
 #      At least one backend must be reachable and serving models on /v1/models.
 #      The optional `models` block declares per-million-token prices (BZZ
-#      decimals); declared prices win over on-chain values on startup, and
-#      Admin-UI edits are mirrored back into this file atomically.
+#      decimals); declared prices win over on-chain values on startup, models
+#      discovered from `/v1/models` are auto-added on first boot, and Admin-UI
+#      edits are mirrored back into this file atomically.
 #      If two backends advertise the same model id, each is exposed (and
 #      registered on-chain) as `<endpoint-name>/<modelId>` — e.g. `ollama/llama3`
 #      and `openai/llama3` — so the operator can price them independently.
