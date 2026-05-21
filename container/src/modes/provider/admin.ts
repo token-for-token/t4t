@@ -7,6 +7,9 @@ import type {JobsDb, ProviderJobRow} from '../../lib/jobs-db'
 import type {Logger} from '../../lib/logger'
 import type {ModelOffering} from '../../lib/types'
 import type {JobQueue} from './listener'
+import type {InferenceEndpoint} from '../../lib/endpoints'
+import {plurToBzzExact, writeEndpoints} from '../../lib/endpoints'
+import type {InferenceRouter} from '../../lib/inference'
 import {
   escape,
   formatDuration,
@@ -46,6 +49,15 @@ export interface ProviderAdminDeps {
   offerings: Map<string, ModelOffering>
   /** Push the current offerings map to the registry via updateOfferings(). */
   publishOfferings: () => Promise<void>
+  /** Mutable endpoints config — UI price edits are mirrored back into this
+   *  list and written to endpoints.json so prices survive a chain RPC outage
+   *  on restart. */
+  endpoints: InferenceEndpoint[]
+  /** Data dir whose `endpoints.json` is the write target for mirrored prices. */
+  dataDir: string
+  /** Router used to map exposed model ids (possibly prefixed) to the
+   *  endpoint + backend-native id under which prices are keyed in JSON. */
+  router: InferenceRouter
 }
 
 export function startAdminServer(deps: ProviderAdminDeps): void {
@@ -224,12 +236,39 @@ export function startAdminServer(deps: ProviderAdminDeps): void {
       res.status(500).send(`<p class="err">on-chain update failed: ${escape(String((err as Error)?.message ?? err))}</p>`)
       return
     }
+    // Mirror the new price into endpoints.json so it survives a restart
+    // independent of an RPC outage. A failure here is logged but doesn't
+    // roll the in-memory / on-chain state back — chain remains the live
+    // source of truth and the next UI save will retry the file write.
+    try {
+      mirrorPriceToFile(deps, modelId, inParsed, outParsed)
+    } catch (err) {
+      deps.logger.warn({err, modelId}, 'failed to mirror price to endpoints.json')
+    }
     res.send(modelRow(deps.offerings.get(modelId)!))
   })
 
   app.listen(deps.port, deps.host, () =>
     deps.logger.info({host: deps.host, port: deps.port}, 'admin ui listening'),
   )
+}
+
+function mirrorPriceToFile(
+  deps: ProviderAdminDeps,
+  exposedModelId: string,
+  inputPlur: bigint,
+  outputPlur: bigint,
+): void {
+  const route = deps.router.routeFor(exposedModelId)
+  if (!route) return
+  const endpoint = deps.endpoints.find(e => e.name === route.endpointName)
+  if (!endpoint) return
+  endpoint.models = endpoint.models ?? {}
+  endpoint.models[route.backendModelId] = {
+    inputBzz: plurToBzzExact(inputPlur),
+    outputBzz: plurToBzzExact(outputPlur),
+  }
+  writeEndpoints(deps.dataDir, deps.endpoints)
 }
 
 function modelsPage(offerings: ModelOffering[], bzzUsd: number | null): string {

@@ -1,6 +1,18 @@
 import {z} from 'zod'
-import {existsSync, readFileSync} from 'node:fs'
+import {existsSync, readFileSync, renameSync, writeFileSync} from 'node:fs'
 import {join} from 'node:path'
+
+const BzzAmount = z.string().refine(s => {
+  const t = s.trim()
+  if (!/^\d+(\.\d*)?$|^\.\d+$/.test(t)) return false
+  const frac = t.split('.')[1] ?? ''
+  return frac.length <= 16
+}, 'must be a non-negative BZZ decimal with at most 16 fractional digits')
+
+const PriceSchema = z.object({
+  inputBzz: BzzAmount,
+  outputBzz: BzzAmount,
+})
 
 const EndpointSchema = z.object({
   // Operator-visible label; appears in logs ("endpoint=openai listModels failed").
@@ -13,6 +25,11 @@ const EndpointSchema = z.object({
   url: z.string().url(),
   // Bearer token. Omit for unauthenticated backends like a local Ollama.
   apiKey: z.string().optional(),
+  // Optional declarative per-model prices, keyed by the **backend-native**
+  // model id (NOT the exposed/prefixed form). BZZ decimal strings — up to 16
+  // fractional digits. UI edits on the Models page are mirrored back here so
+  // operators can hand-edit or version-control prices.
+  models: z.record(PriceSchema).optional(),
 })
 
 const EndpointsSchema = z.array(EndpointSchema).min(1).superRefine((arr, ctx) => {
@@ -26,6 +43,7 @@ const EndpointsSchema = z.array(EndpointSchema).min(1).superRefine((arr, ctx) =>
 })
 
 export type InferenceEndpoint = z.infer<typeof EndpointSchema>
+export type ModelPriceEntry = z.infer<typeof PriceSchema>
 
 /** Resolve the on-disk endpoints file path — `T4T_ENDPOINTS_FILE` env wins,
  *  else `${T4T_DATA_DIR}/endpoints.json`. Mirrors `walletKeyFilePath`. */
@@ -69,4 +87,28 @@ export function loadEndpoints(dataDir: string): InferenceEndpoint[] {
     throw new EndpointsFileError(path, `${path} is not a valid endpoints list: ${parsed.error.message}`)
   }
   return parsed.data
+}
+
+/** Atomic write — stage to `${path}.tmp`, then rename. Same file that
+ *  `loadEndpoints` reads. Pretty-printed so the operator can diff and
+ *  hand-edit the file alongside container-driven price updates. */
+export function writeEndpoints(dataDir: string, endpoints: InferenceEndpoint[]): void {
+  const path = endpointsFilePath(dataDir)
+  const tmp = `${path}.tmp`
+  writeFileSync(tmp, JSON.stringify(endpoints, null, 2) + '\n', 'utf8')
+  renameSync(tmp, path)
+}
+
+/** Reverse of `parseBzzToPlur` — render a PLUR bigint as a non-lossy BZZ
+ *  decimal string. Suitable for round-tripping a UI edit back into JSON
+ *  (unlike `formatXBZZ`, which truncates to 6 fractional digits for display). */
+export function plurToBzzExact(plur: bigint): string {
+  const SCALE = 10n ** 16n
+  const negative = plur < 0n
+  const abs = negative ? -plur : plur
+  const whole = abs / SCALE
+  const frac = abs % SCALE
+  if (frac === 0n) return `${negative ? '-' : ''}${whole}`
+  const fracStr = (frac + SCALE).toString().slice(1).replace(/0+$/, '')
+  return `${negative ? '-' : ''}${whole}.${fracStr}`
 }

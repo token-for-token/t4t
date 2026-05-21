@@ -142,6 +142,16 @@ export class InferenceRouter {
     return this.routing.get(modelId)?.client.name ?? null
   }
 
+  /** Returns the endpoint name plus the backend-native model id for an
+   *  exposed id (i.e. the id that travels over the wire / on-chain). Used by
+   *  the admin UI to mirror price edits back into endpoints.json, which
+   *  keys prices by backend-native id, not the prefixed exposed form. */
+  routeFor(exposedId: string): {endpointName: string; backendModelId: string} | null {
+    const e = this.routing.get(exposedId)
+    if (!e) return null
+    return {endpointName: e.client.name, backendModelId: e.backendModelId}
+  }
+
   async chatCompletion(req: OpenAIChatRequest): Promise<OpenAIChatResponse> {
     const entry = this.routing.get(req.model)
     if (!entry) throw new Error(`no inference endpoint serves model ${req.model}`)

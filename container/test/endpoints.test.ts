@@ -1,8 +1,14 @@
 import {afterEach, beforeEach, describe, expect, it} from 'vitest'
-import {mkdtempSync, rmSync, writeFileSync} from 'node:fs'
+import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
-import {EndpointsFileError, endpointsFilePath, loadEndpoints} from '../src/lib/endpoints'
+import {
+  EndpointsFileError,
+  endpointsFilePath,
+  loadEndpoints,
+  plurToBzzExact,
+  writeEndpoints,
+} from '../src/lib/endpoints'
 
 let dir: string
 
@@ -90,5 +96,82 @@ describe('loadEndpoints', () => {
     process.env.T4T_ENDPOINTS_FILE = alt
     const eps = loadEndpoints('/ignored')
     expect(eps).toEqual([{name: 'a', url: 'http://a:1'}])
+  })
+
+  it('accepts a models block with BZZ decimal prices', () => {
+    writeFileSync(
+      join(dir, 'endpoints.json'),
+      JSON.stringify([
+        {
+          name: 'ollama',
+          url: 'http://ollama:11434',
+          models: {
+            llama3: {inputBzz: '0.3', outputBzz: '1.5'},
+          },
+        },
+      ]),
+    )
+    const eps = loadEndpoints(dir)
+    expect(eps[0]!.models).toEqual({llama3: {inputBzz: '0.3', outputBzz: '1.5'}})
+  })
+
+  it('rejects a price with more than 16 fractional digits', () => {
+    writeFileSync(
+      join(dir, 'endpoints.json'),
+      JSON.stringify([
+        {
+          name: 'ollama',
+          url: 'http://ollama:11434',
+          models: {llama3: {inputBzz: '0.12345678901234567', outputBzz: '1'}},
+        },
+      ]),
+    )
+    expect(() => loadEndpoints(dir)).toThrow(/at most 16 fractional digits/)
+  })
+
+  it('rejects a non-decimal price string', () => {
+    writeFileSync(
+      join(dir, 'endpoints.json'),
+      JSON.stringify([
+        {
+          name: 'ollama',
+          url: 'http://ollama:11434',
+          models: {llama3: {inputBzz: 'free', outputBzz: '1.5'}},
+        },
+      ]),
+    )
+    expect(() => loadEndpoints(dir)).toThrow(EndpointsFileError)
+  })
+})
+
+describe('writeEndpoints', () => {
+  it('atomically writes JSON-pretty contents loadable by loadEndpoints', () => {
+    const value = [
+      {
+        name: 'ollama',
+        url: 'http://ollama:11434',
+        models: {llama3: {inputBzz: '0.3', outputBzz: '1.5'}},
+      },
+    ]
+    writeEndpoints(dir, value)
+    const raw = readFileSync(join(dir, 'endpoints.json'), 'utf8')
+    expect(raw.endsWith('\n')).toBe(true)
+    expect(JSON.parse(raw)).toEqual(value)
+    expect(loadEndpoints(dir)).toEqual(value)
+  })
+})
+
+describe('plurToBzzExact', () => {
+  it('round-trips through parseBzzToPlur without precision loss', async () => {
+    const {parseBzzToPlur} = await import('../src/lib/admin-html')
+    for (const s of ['0', '0.3', '1.5', '0.0000000000000001', '1234.5678', '12345678901234567']) {
+      expect(plurToBzzExact(parseBzzToPlur(s))).toBe(s.replace(/^0+(\d)/, '$1'))
+    }
+  })
+
+  it('renders integer PLUR values without a fractional part', () => {
+    expect(plurToBzzExact(0n)).toBe('0')
+    expect(plurToBzzExact(10n ** 16n)).toBe('1')
+    expect(plurToBzzExact(3n * 10n ** 15n)).toBe('0.3')
   })
 })

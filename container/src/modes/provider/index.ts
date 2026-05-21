@@ -28,6 +28,7 @@ import {JobPostedIndex} from '../../lib/job-index'
 import {JobsDb} from '../../lib/jobs-db'
 import {InferenceClient, InferenceRouter} from '../../lib/inference'
 import {EndpointsFileError, endpointsFilePath, loadEndpoints, type InferenceEndpoint} from '../../lib/endpoints'
+import {parseBzzToPlur} from '../../lib/admin-html'
 import {loadOrCreatePssKey} from '../../lib/keys'
 import type {Hex, ModelOffering} from '../../lib/types'
 import {startAdminServer} from './admin'
@@ -266,21 +267,40 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
     )
     process.exit(1)
   }
-  // Merge: preserve any on-chain price the operator has set previously
-  // (e.g. edited via the admin UI). Only newly-seen models get env defaults.
+  // Merge precedence (high → low): endpoints.json declared price → on-chain
+  // price (preserves prior UI edits) → env defaults. UI edits write the new
+  // price back to endpoints.json on save, so prior edits survive a restart
+  // even if the chain read fails.
   const onChainOfferings = await getOfferings(chain, chain.address).catch(() => [] as ModelOffering[])
   const existingByModel = new Map(onChainOfferings.map(o => [o.modelId, o]))
-  const offeringsByModel = new Map<string, ModelOffering>()
-  for (const modelId of modelIds) {
+  function declaredPriceFor(exposedId: string): {inputPlur: bigint; outputPlur: bigint} | null {
+    const route = inference.routeFor(exposedId)
+    if (!route) return null
+    const endpoint = endpoints.find(e => e.name === route.endpointName)
+    const declared = endpoint?.models?.[route.backendModelId]
+    if (!declared) return null
+    try {
+      return {inputPlur: parseBzzToPlur(declared.inputBzz), outputPlur: parseBzzToPlur(declared.outputBzz)}
+    } catch (err) {
+      log.warn({err, exposedId}, 'declared price in endpoints.json is invalid; ignoring')
+      return null
+    }
+  }
+  function resolveOffering(modelId: string): ModelOffering {
     const prior = existingByModel.get(modelId)
-    offeringsByModel.set(modelId, {
+    const declared = declaredPriceFor(modelId)
+    return {
       modelId,
-      inputPricePerMillionTokens: prior?.inputPricePerMillionTokens ?? cfg.T4T_INPUT_PRICE_DEFAULT,
-      outputPricePerMillionTokens: prior?.outputPricePerMillionTokens ?? cfg.T4T_OUTPUT_PRICE_DEFAULT,
+      inputPricePerMillionTokens:
+        declared?.inputPlur ?? prior?.inputPricePerMillionTokens ?? cfg.T4T_INPUT_PRICE_DEFAULT,
+      outputPricePerMillionTokens:
+        declared?.outputPlur ?? prior?.outputPricePerMillionTokens ?? cfg.T4T_OUTPUT_PRICE_DEFAULT,
       maxContextTokens: prior?.maxContextTokens ?? 0n,
       maxLatencySeconds: prior?.maxLatencySeconds ?? 120n,
-    })
+    }
   }
+  const offeringsByModel = new Map<string, ModelOffering>()
+  for (const modelId of modelIds) offeringsByModel.set(modelId, resolveOffering(modelId))
 
   async function publishOfferings(): Promise<void> {
     const arr = [...offeringsByModel.values()]
@@ -310,14 +330,13 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
   else log.info({count: offeringsByModel.size}, 'offerings already match on-chain; skip publish')
 
   function buildOffering(modelId: string): ModelOffering {
-    const prior = offeringsByModel.get(modelId) ?? existingByModel.get(modelId)
-    return {
-      modelId,
-      inputPricePerMillionTokens: prior?.inputPricePerMillionTokens ?? cfg.T4T_INPUT_PRICE_DEFAULT,
-      outputPricePerMillionTokens: prior?.outputPricePerMillionTokens ?? cfg.T4T_OUTPUT_PRICE_DEFAULT,
-      maxContextTokens: prior?.maxContextTokens ?? 0n,
-      maxLatencySeconds: prior?.maxLatencySeconds ?? 120n,
-    }
+    // The in-memory offerings map carries prior UI edits — prefer it over a
+    // fresh resolve so heartbeat ticks don't undo an unsaved declared-price
+    // override. New models that appeared after startup fall through to the
+    // resolver and pick up JSON declarations / on-chain / defaults.
+    const cached = offeringsByModel.get(modelId)
+    if (cached) return cached
+    return resolveOffering(modelId)
   }
 
   function offeringsDiffer(next: Map<string, ModelOffering>): boolean {
@@ -539,6 +558,9 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
     logger: log,
     offerings: offeringsByModel,
     publishOfferings,
+    endpoints,
+    dataDir: cfg.T4T_DATA_DIR,
+    router: inference,
   })
 
   if (cfg.T4T_DEACTIVATE_ON_SHUTDOWN) {

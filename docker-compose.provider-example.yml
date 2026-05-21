@@ -7,10 +7,22 @@
 #   2. Create `data/provider/endpoints.json` listing your inference backends
 #      (see container/src/lib/endpoints.ts for the schema). Example:
 #        [
-#          {"name": "ollama", "url": "http://ollama:11434"},
-#          {"name": "openai", "url": "https://api.openai.com", "apiKey": "sk-..."}
+#          {
+#            "name": "ollama",
+#            "url": "http://ollama:11434",
+#            "models": {"llama3": {"inputBzz": "0.3", "outputBzz": "1.5"}}
+#          },
+#          {
+#            "name": "openai",
+#            "url": "https://api.openai.com",
+#            "apiKey": "sk-...",
+#            "models": {"gpt-4o-mini": {"inputBzz": "0.15", "outputBzz": "0.6"}}
+#          }
 #        ]
 #      At least one backend must be reachable and serving models on /v1/models.
+#      The optional `models` block declares per-million-token prices (BZZ
+#      decimals); declared prices win over on-chain values on startup, and
+#      Admin-UI edits are mirrored back into this file atomically.
 #      If two backends advertise the same model id, each is exposed (and
 #      registered on-chain) as `<endpoint-name>/<modelId>` — e.g. `ollama/llama3`
 #      and `openai/llama3` — so the operator can price them independently.

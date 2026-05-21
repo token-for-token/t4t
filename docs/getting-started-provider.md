@@ -20,18 +20,33 @@ On startup the container queries each configured backend's `GET /v1/models` and 
 
 ## 3. Configure inference endpoints
 
-Create `data/provider/endpoints.json` listing every OpenAI-compatible backend the provider should route to. Each entry is `{name, url, apiKey?}`:
+Create `data/provider/endpoints.json` listing every OpenAI-compatible backend the provider should route to. Each entry is `{name, url, apiKey?, models?}`:
 
 ```json
 [
-  {"name": "ollama", "url": "http://host.docker.internal:11434"},
-  {"name": "openai", "url": "https://api.openai.com", "apiKey": "sk-..."}
+  {
+    "name": "ollama",
+    "url": "http://host.docker.internal:11434",
+    "models": {
+      "llama3": {"inputBzz": "0.3", "outputBzz": "1.5"}
+    }
+  },
+  {
+    "name": "openai",
+    "url": "https://api.openai.com",
+    "apiKey": "sk-...",
+    "models": {
+      "gpt-4o-mini": {"inputBzz": "0.15", "outputBzz": "0.6"}
+    }
+  }
 ]
 ```
 
 `name` is a short label (no `/`) that appears in logs and acts as the disambiguation prefix when two backends serve the same model id. `url` is the base URL — `/v1/chat/completions` and `/v1/models` are appended at call time, so don't include them here. `apiKey` is optional (omit for Ollama; required for OpenAI / vLLM-with-`--api-key`).
 
-If two backends advertise the same model id (e.g. both Ollama and OpenAI serve `llama3`), the provider registers each one on-chain under `<endpoint-name>/<modelId>` — so `ollama/llama3` and `openai/llama3` become two distinct offerings, each with its own price (editable on the Models page). Clients then request whichever flavour they want. Models served by a single backend keep their bare id.
+`models` is optional. Each entry is keyed by the **backend-native** model id (e.g. `llama3`, not the prefixed `ollama/llama3`) and gives the per-million-token price as a BZZ decimal string. On startup, declared prices win over any on-chain value, which in turn wins over the env defaults. Saving a new price on the admin UI's Models page writes the value back to this file atomically — so prices in JSON, in memory, and on-chain stay in sync.
+
+If two backends advertise the same model id (e.g. both Ollama and OpenAI serve `llama3`), the provider registers each one on-chain under `<endpoint-name>/<modelId>` — so `ollama/llama3` and `openai/llama3` become two distinct offerings, each with its own price (editable on the Models page or directly in JSON). Clients then request whichever flavour they want. Models served by a single backend keep their bare id.
 
 Override the path with `T4T_ENDPOINTS_FILE`.
 
