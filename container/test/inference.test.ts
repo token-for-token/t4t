@@ -1,0 +1,163 @@
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest'
+import {InferenceClient, InferenceRouter} from '../src/lib/inference'
+import type {OpenAIChatRequest, OpenAIChatResponse} from '../src/lib/types'
+
+interface FetchCall {
+  url: string
+  init?: RequestInit
+}
+
+let calls: FetchCall[] = []
+const originalFetch = globalThis.fetch
+
+function mockFetch(handler: (url: string, init?: RequestInit) => Response | Promise<Response>) {
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input.toString()
+    calls.push({url, init})
+    return handler(url, init)
+  }) as typeof fetch
+}
+
+function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: {'content-type': 'application/json'},
+    ...init,
+  })
+}
+
+function silentLogger() {
+  const log = {
+    warn: vi.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
+    fatal: vi.fn(),
+    debug: vi.fn(),
+    trace: vi.fn(),
+    child: vi.fn(() => log),
+  }
+  return log
+}
+
+beforeEach(() => {
+  calls = []
+})
+
+afterEach(() => {
+  globalThis.fetch = originalFetch
+})
+
+describe('InferenceRouter.listModels', () => {
+  it('aggregates models from every endpoint', async () => {
+    mockFetch(url => {
+      if (url === 'http://ollama:11434/v1/models') return jsonResponse({data: [{id: 'llama3'}, {id: 'mistral'}]})
+      if (url === 'https://api.openai.com/v1/models') return jsonResponse({data: [{id: 'gpt-4o-mini'}]})
+      throw new Error(`unexpected url ${url}`)
+    })
+    const log = silentLogger()
+    const router = new InferenceRouter(
+      [
+        new InferenceClient('ollama', 'http://ollama:11434'),
+        new InferenceClient('openai', 'https://api.openai.com', 'sk-test'),
+      ],
+      log as unknown as Parameters<typeof InferenceRouter>[1] extends never ? never : Parameters<ConstructorParameters<typeof InferenceRouter>[1]>[number],
+    )
+    const models = await router.listModels()
+    expect(models.sort()).toEqual(['gpt-4o-mini', 'llama3', 'mistral'])
+    expect(router.endpointFor('llama3')).toBe('ollama')
+    expect(router.endpointFor('gpt-4o-mini')).toBe('openai')
+    expect(log.warn).not.toHaveBeenCalled()
+  })
+
+  it('keeps the first endpoint on collisions and warns', async () => {
+    mockFetch(url => {
+      if (url === 'http://a/v1/models') return jsonResponse({data: [{id: 'llama3'}]})
+      if (url === 'http://b/v1/models') return jsonResponse({data: [{id: 'llama3'}, {id: 'extra'}]})
+      throw new Error(`unexpected url ${url}`)
+    })
+    const log = silentLogger()
+    const router = new InferenceRouter(
+      [new InferenceClient('a', 'http://a'), new InferenceClient('b', 'http://b')],
+      log as never,
+    )
+    const models = await router.listModels()
+    expect(models.sort()).toEqual(['extra', 'llama3'])
+    expect(router.endpointFor('llama3')).toBe('a')
+    expect(router.endpointFor('extra')).toBe('b')
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({modelId: 'llama3', kept: 'a', ignored: 'b'}),
+      expect.stringMatching(/first-listed endpoint wins/),
+    )
+  })
+
+  it('skips endpoints whose listModels throws, keeps the rest live', async () => {
+    mockFetch(url => {
+      if (url === 'http://broken/v1/models') return new Response('boom', {status: 503})
+      if (url === 'http://ok/v1/models') return jsonResponse({data: [{id: 'llama3'}]})
+      throw new Error(`unexpected url ${url}`)
+    })
+    const log = silentLogger()
+    const router = new InferenceRouter(
+      [new InferenceClient('broken', 'http://broken'), new InferenceClient('ok', 'http://ok')],
+      log as never,
+    )
+    const models = await router.listModels()
+    expect(models).toEqual(['llama3'])
+    expect(router.endpointFor('llama3')).toBe('ok')
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({endpoint: 'broken'}),
+      expect.stringMatching(/listModels failed/),
+    )
+  })
+})
+
+describe('InferenceRouter.chatCompletion', () => {
+  function fakeResponse(): OpenAIChatResponse {
+    return {
+      id: 'r1',
+      object: 'chat.completion',
+      created: 0,
+      model: 'gpt-4o-mini',
+      choices: [{index: 0, message: {role: 'assistant', content: 'hi'}, finish_reason: 'stop'}],
+    }
+  }
+
+  it('routes to the endpoint that advertised the model and forwards the api key', async () => {
+    mockFetch(url => {
+      if (url.endsWith('/v1/models')) {
+        if (url === 'http://ollama:11434/v1/models') return jsonResponse({data: [{id: 'llama3'}]})
+        if (url === 'https://api.openai.com/v1/models') return jsonResponse({data: [{id: 'gpt-4o-mini'}]})
+      }
+      if (url.endsWith('/v1/chat/completions')) return jsonResponse(fakeResponse())
+      throw new Error(`unexpected url ${url}`)
+    })
+    const router = new InferenceRouter(
+      [
+        new InferenceClient('ollama', 'http://ollama:11434'),
+        new InferenceClient('openai', 'https://api.openai.com', 'sk-secret'),
+      ],
+      silentLogger() as never,
+    )
+    await router.listModels()
+
+    const req: OpenAIChatRequest = {model: 'gpt-4o-mini', messages: [{role: 'user', content: 'hi'}]}
+    await router.chatCompletion(req)
+
+    const chatCall = calls.find(c => c.url.endsWith('/v1/chat/completions'))!
+    expect(chatCall.url).toBe('https://api.openai.com/v1/chat/completions')
+    const headers = chatCall.init?.headers as Record<string, string>
+    expect(headers.authorization).toBe('Bearer sk-secret')
+  })
+
+  it('throws a clear error when the model is unknown', async () => {
+    mockFetch(() => jsonResponse({data: []}))
+    const router = new InferenceRouter(
+      [new InferenceClient('ollama', 'http://ollama:11434')],
+      silentLogger() as never,
+    )
+    await router.listModels()
+    await expect(
+      router.chatCompletion({model: 'nope', messages: []}),
+    ).rejects.toThrow(/no inference endpoint serves model nope/)
+  })
+})

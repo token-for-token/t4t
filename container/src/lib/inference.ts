@@ -1,3 +1,4 @@
+import type {Logger} from './logger'
 import type {OpenAIChatRequest, OpenAIChatResponse} from './types'
 
 /**
@@ -7,6 +8,8 @@ import type {OpenAIChatRequest, OpenAIChatResponse} from './types'
  */
 export class InferenceClient {
   constructor(
+    /** Operator-visible label used in logs (e.g. "openai", "ollama"). */
+    readonly name: string,
     private readonly baseUrl: string,
     private readonly apiKey?: string,
   ) {}
@@ -28,14 +31,14 @@ export class InferenceClient {
     })
     if (!res.ok) {
       const text = await res.text().catch(() => '')
-      throw new Error(`inference backend ${res.status}: ${text}`)
+      throw new Error(`inference backend ${this.name} ${res.status}: ${text}`)
     }
     return (await res.json()) as OpenAIChatResponse
   }
 
   async listModels(): Promise<string[]> {
     const res = await fetch(`${this.baseUrl}/v1/models`, {headers: this.headers()})
-    if (!res.ok) throw new Error(`inference backend list ${res.status}`)
+    if (!res.ok) throw new Error(`inference backend ${this.name} list ${res.status}`)
     const data = (await res.json()) as {data?: Array<{id: string}>}
     return (data.data ?? []).map(m => m.id)
   }
@@ -55,7 +58,68 @@ export class InferenceClient {
     })
     if (!res.ok) {
       const text = await res.text().catch(() => '')
-      throw new Error(`probe ${modelId} ${res.status}: ${text}`)
+      throw new Error(`probe ${this.name} ${modelId} ${res.status}: ${text}`)
     }
+  }
+}
+
+/**
+ * Routes inference calls across multiple `InferenceClient` backends. Each
+ * `listModels()` rebuilds the modelId → client map: first endpoint to advertise
+ * a model wins (later collisions are warned and dropped). An endpoint whose
+ * `/v1/models` call fails is skipped for that round — one broken backend should
+ * not silently disable the others.
+ */
+export class InferenceRouter {
+  private routing = new Map<string, InferenceClient>()
+
+  constructor(
+    readonly clients: InferenceClient[],
+    private readonly logger: Logger,
+  ) {}
+
+  /** Aggregated, deduped model list across all reachable endpoints.
+   *  Side-effect: refreshes the internal routing map. */
+  async listModels(): Promise<string[]> {
+    const next = new Map<string, InferenceClient>()
+    for (const c of this.clients) {
+      let ids: string[]
+      try {
+        ids = await c.listModels()
+      } catch (err) {
+        this.logger.warn({err, endpoint: c.name}, 'listModels failed; skipping endpoint this round')
+        continue
+      }
+      for (const id of ids) {
+        const prev = next.get(id)
+        if (prev) {
+          this.logger.warn(
+            {modelId: id, kept: prev.name, ignored: c.name},
+            'model collision; first-listed endpoint wins',
+          )
+          continue
+        }
+        next.set(id, c)
+      }
+    }
+    this.routing = next
+    return [...next.keys()]
+  }
+
+  /** Returns the endpoint name currently serving a model, or null if unknown. */
+  endpointFor(modelId: string): string | null {
+    return this.routing.get(modelId)?.name ?? null
+  }
+
+  async chatCompletion(req: OpenAIChatRequest): Promise<OpenAIChatResponse> {
+    const c = this.routing.get(req.model)
+    if (!c) throw new Error(`no inference endpoint serves model ${req.model}`)
+    return c.chatCompletion(req)
+  }
+
+  async probeModel(modelId: string): Promise<void> {
+    const c = this.routing.get(modelId)
+    if (!c) throw new Error(`no inference endpoint serves model ${modelId}`)
+    return c.probeModel(modelId)
   }
 }

@@ -26,7 +26,8 @@ import {providerTopic} from '../../lib/envelope'
 import {EciesCipher} from '../../lib/crypto'
 import {JobPostedIndex} from '../../lib/job-index'
 import {JobsDb} from '../../lib/jobs-db'
-import {InferenceClient} from '../../lib/inference'
+import {InferenceClient, InferenceRouter} from '../../lib/inference'
+import {EndpointsFileError, endpointsFilePath, loadEndpoints, type InferenceEndpoint} from '../../lib/endpoints'
 import {loadOrCreatePssKey} from '../../lib/keys'
 import type {Hex, ModelOffering} from '../../lib/types'
 import {startAdminServer} from './admin'
@@ -235,13 +236,36 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
     )
   }
 
-  const inference = new InferenceClient(cfg.OPENAI_BASE_URL, cfg.OPENAI_API_KEY)
-  // Offerings = whatever the backend currently serves. To stop offering a model,
-  // remove it from the backend (e.g. `ollama rm <model>`) and restart.
-  const modelIds = await inference.listModels().catch(err => {
-    log.fatal({err, backend: cfg.OPENAI_BASE_URL}, 'inference backend unreachable; cannot determine offerings')
+  let endpoints: InferenceEndpoint[]
+  try {
+    endpoints = loadEndpoints(cfg.T4T_DATA_DIR)
+  } catch (err) {
+    if (err instanceof EndpointsFileError) {
+      log.fatal(
+        {path: err.path},
+        `${err.message} — example: [{"name":"ollama","url":"http://ollama:11434"},{"name":"openai","url":"https://api.openai.com","apiKey":"sk-..."}]`,
+      )
+    } else {
+      log.fatal({err, path: endpointsFilePath(cfg.T4T_DATA_DIR)}, 'failed to load inference endpoints')
+    }
     process.exit(1)
-  })
+  }
+  const inference = new InferenceRouter(
+    endpoints.map(e => new InferenceClient(e.name, e.url, e.apiKey)),
+    log,
+  )
+  log.info({endpoints: endpoints.map(e => ({name: e.name, url: e.url}))}, 'inference endpoints loaded')
+  // Offerings = whatever the configured backends currently serve. To stop
+  // offering a model, remove it from the backend (e.g. `ollama rm <model>`)
+  // or drop the backend from endpoints.json and restart.
+  const modelIds = await inference.listModels()
+  if (modelIds.length === 0) {
+    log.fatal(
+      {endpoints: endpoints.map(e => e.name)},
+      'no models reachable on any configured inference endpoint; cannot determine offerings',
+    )
+    process.exit(1)
+  }
   // Merge: preserve any on-chain price the operator has set previously
   // (e.g. edited via the admin UI). Only newly-seen models get env defaults.
   const onChainOfferings = await getOfferings(chain, chain.address).catch(() => [] as ModelOffering[])
@@ -261,7 +285,10 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
   async function publishOfferings(): Promise<void> {
     const arr = [...offeringsByModel.values()]
     if (arr.length === 0) {
-      log.warn({backend: cfg.OPENAI_BASE_URL}, 'backend reports zero models — provider will not receive jobs until at least one model is loaded')
+      log.warn(
+        {endpoints: endpoints.map(e => e.name)},
+        'no models reachable on any configured endpoint — provider will not receive jobs until at least one model is loaded',
+      )
       return
     }
     await updateOfferings(chain, arr)

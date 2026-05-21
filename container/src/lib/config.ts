@@ -115,10 +115,11 @@ const Gateway = Common.extend({
 
 const Provider = Common.extend({
   T4T_MODE: z.literal('provider'),
-  // OpenAI-compatible inference backend (Ollama, vLLM, LiteLLM, llama.cpp, OpenAI itself).
-  // Default points at host's Ollama (port 11434); for vLLM use the vLLM server URL (typically :8000).
-  OPENAI_BASE_URL: z.string().url().default('http://host.docker.internal:11434'),
-  OPENAI_API_KEY: z.string().optional(),
+  // Inference endpoints are configured per-backend in ${T4T_DATA_DIR}/endpoints.json
+  // (override with T4T_ENDPOINTS_FILE). The file is a JSON array of
+  // {name, url, apiKey?} entries — see container/src/lib/endpoints.ts. Supports
+  // mixing local backends (Ollama, vLLM) with hosted ones (OpenAI, …); the
+  // first endpoint to advertise a given model id wins on collision.
   // Default prices (xBZZ wei per 1M tokens, input vs output) applied to newly-discovered
   // models. xBZZ has 16 decimals on Gnosis, so 1e16 wei = 1 BZZ. Per-model prices
   // live on-chain in ModelOffering and can be edited from the admin UI; these
@@ -131,8 +132,8 @@ const Provider = Common.extend({
 })
 
 // Admin subcommands (deactivate, withdraw-stake) only need chain credentials
-// — not OPENAI_BASE_URL, offered models, or any client-only knobs. T4T_MODE is
-// also dropped so operators can run `t4t deactivate` without their compose env loaded.
+// — not the endpoints file, offered models, or any client-only knobs. T4T_MODE
+// is also dropped so operators can run `t4t deactivate` without their compose env loaded.
 const Admin = Common.omit({T4T_MODE: true, POSTAGE_BATCH_ID: true}).extend({
   POSTAGE_BATCH_ID: Common.shape.POSTAGE_BATCH_ID.optional(),
 })

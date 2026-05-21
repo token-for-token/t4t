@@ -3,11 +3,20 @@
 # the t4t marketplace on Gnosis Chain.
 #
 # First-boot flow:
-#   1. `mkdir -p data/provider && docker compose up -d`
-#   2. Open http://localhost:3000/wallet → Generate or import a wallet
-#   3. Fund the new address with xDAI (gas) and ≥ 100 xBZZ (stake)
-#   4. The page polls every 10s and auto-advances through onboarding phases
-#   5. Once live, pull models with `docker exec t4t-ollama-1 ollama pull <model>`
+#   1. `mkdir -p data/provider`
+#   2. Create `data/provider/endpoints.json` listing your inference backends
+#      (see container/src/lib/endpoints.ts for the schema). Example:
+#        [
+#          {"name": "ollama", "url": "http://ollama:11434"},
+#          {"name": "openai", "url": "https://api.openai.com", "apiKey": "sk-..."}
+#        ]
+#      At least one backend must be reachable and serving models on /v1/models.
+#      If two backends advertise the same model id, the first listed wins.
+#   3. `docker compose up -d`
+#   4. Open http://localhost:3000/wallet → Generate or import a wallet
+#   5. Fund the new address with xDAI (gas) and ≥ 100 xBZZ (stake)
+#   6. The page polls every 10s and auto-advances through onboarding phases
+#   7. Once live, pull models with `docker exec t4t-ollama-1 ollama pull <model>`
 
 services:
 
@@ -38,10 +47,11 @@ services:
       # point at a hosted one. The provider uses Bee to (a) discover a usable
       # postage batch and (b) send PSS messages with job results.
       BEE_API_URL: http://bee:1633
-      # Inference backend — any OpenAI-compatible endpoint works (Ollama,
-      # vLLM, LiteLLM, llama.cpp server, OpenAI itself).
-      OPENAI_BASE_URL: http://ollama:11434
-      # OPENAI_API_KEY: ...   # uncomment for backends that require auth
+      # Inference backends are configured in `data/provider/endpoints.json`
+      # (bind-mounted into /data below). Any OpenAI-compatible endpoint works
+      # (Ollama, vLLM, LiteLLM, llama.cpp server, OpenAI itself); multiple
+      # backends are supported. Override the file location with
+      # T4T_ENDPOINTS_FILE: /custom/path/endpoints.json if needed.
       #
       # The protocol addresses default to the Gnosis-mainnet deployment baked
       # into the image (see container/src/lib/config.ts). Uncomment to override
@@ -83,9 +93,10 @@ services:
     ports:
       - "3000:3000"            # admin UI — wallet onboarding + jobs/status/models
     volumes:
-      # Bind-mount so wallet.key / pss.key / jobs.db are operator-visible
-      # files (easy backup), not opaque docker volumes. The host folder
-      # must be owned by uid 1000 (matches the container's `node` user):
+      # Bind-mount so wallet.key / pss.key / jobs.db / endpoints.json are
+      # operator-visible files (easy backup, edit endpoints.json without a
+      # rebuild), not opaque docker volumes. The host folder must be owned
+      # by uid 1000 (matches the container's `node` user):
       #   mkdir -p data/provider
       - ./data/provider:/data
 

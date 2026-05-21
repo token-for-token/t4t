@@ -1,7 +1,7 @@
 import {keccak256, toBytes} from 'viem'
 import {jsonDecrypt, jsonEncrypt, type PayloadCipher} from '../../lib/crypto'
 import type {Logger} from '../../lib/logger'
-import {InferenceClient} from '../../lib/inference'
+import {InferenceRouter} from '../../lib/inference'
 import type {PssTransport} from '../../lib/swarm'
 import {downloadChunk, uploadChunk} from '../../lib/swarm'
 import type {Bee} from '@ethersphere/bee-js'
@@ -33,7 +33,7 @@ export interface WorkerDeps {
   bee: Bee
   postageBatchId: string
   pss: PssTransport
-  inference: InferenceClient
+  inference: InferenceRouter
   cipher: PayloadCipher
   selfAddress: Hex
   signMessage: (msg: string) => Promise<Hex>
