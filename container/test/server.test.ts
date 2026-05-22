@@ -82,7 +82,7 @@ describe('attachClientApi /v1/chat/completions streaming', () => {
     harness = null
   })
 
-  it('emits progress events inside a <details type="status"> block before the response body', async () => {
+  it('emits progress events inside a <think> block before the response body', async () => {
     const events: ProgressEvent[] = [
       {kind: 'selecting_provider', modelId: 'llama3:8b'},
       {kind: 'provider_selected', provider: '0xabcdef1234567890abcdef1234567890abcdef12', modelId: 'llama3:8b'},
@@ -121,30 +121,28 @@ describe('attachClientApi /v1/chat/completions streaming', () => {
       .map(c => (c.choices as Array<{delta: {content?: string}}>)[0]!.delta.content ?? '')
       .join('')
 
-    // Status block opens with the Open WebUI status type attribute.
-    expect(fullText).toContain('<details type="status" done="false">')
-    expect(fullText).toContain('<summary>t4t network</summary>')
-    expect(fullText).toContain('</details>')
+    expect(fullText).toContain('<think>')
+    expect(fullText).toContain('</think>')
 
-    // Progress lines live inside the status block; the assistant answer
+    // Progress lines live inside the thinking block; the assistant answer
     // lives outside it. Split on the closing tag and check both halves.
-    const [statusBody, answerBody] = fullText.split('</details>')
-    expect(statusBody).toBeDefined()
+    const [thinkBody, answerBody] = fullText.split('</think>')
+    expect(thinkBody).toBeDefined()
     expect(answerBody).toBeDefined()
 
-    expect(statusBody).toContain('- selecting provider for `llama3:8b`')
-    expect(statusBody).toContain('- provider `0xabcd…ef12` selected')
-    expect(statusBody).toContain('- posting job on-chain')
-    expect(statusBody).toContain('- job posted')
-    expect(statusBody).toContain('- notifying provider via Swarm PSS')
-    expect(statusBody).toContain('- provider acked (ETA 12s)')
-    expect(statusBody).toContain('- awaiting response delivery')
-    expect(statusBody).toContain('- response delivered (3/4 tokens)')
+    expect(thinkBody).toContain('t4t network:')
+    expect(thinkBody).toContain('- selecting provider for `llama3:8b`')
+    expect(thinkBody).toContain('- provider `0xabcd…ef12` selected')
+    expect(thinkBody).toContain('- posting job on-chain')
+    expect(thinkBody).toContain('- job posted')
+    expect(thinkBody).toContain('- notifying provider via Swarm PSS')
+    expect(thinkBody).toContain('- provider acked (ETA 12s)')
+    expect(thinkBody).toContain('- awaiting response delivery')
+    expect(thinkBody).toContain('- response delivered (3/4 tokens)')
 
-    // The model answer is outside the status block — Open WebUI renders this
-    // as the assistant message proper, with the status block as a pill above.
+    // The model answer is outside the thinking block.
     expect(answerBody).toContain('hello world')
-    expect(statusBody).not.toContain('hello world')
+    expect(thinkBody).not.toContain('hello world')
 
     // The response arrives from Swarm as one blob; no cosmetic chunking.
     // Exactly one content chunk should carry the answer string.
@@ -160,6 +158,71 @@ describe('attachClientApi /v1/chat/completions streaming', () => {
     // Final chunk carries finish_reason.
     const last = chunks[chunks.length - 1]!
     expect((last.choices as Array<{finish_reason: string}>)[0]!.finish_reason).toBe('stop')
+  })
+
+  it('merges a model-emitted <think> block into the gateway thinking panel', async () => {
+    harness = await startServer({
+      logger: silentLogger(),
+      fakeStreaming: true,
+      listModels: async () => [],
+      handleChat: async (_req, onProgress) => {
+        onProgress?.({kind: 'selecting_provider', modelId: 'r1'})
+        // Reasoning model: <think> at the head of the content, then the
+        // actual answer.
+        return fakeCompletion('<think>step 1: parse\nstep 2: answer</think>\n42')
+      },
+    })
+
+    const sse = await readSse(harness.url, {
+      model: 'r1',
+      messages: [{role: 'user', content: 'what is the answer?'}],
+      stream: true,
+    })
+
+    const fullText = parseChunks(sse)
+      .map(c => (c.choices as Array<{delta: {content?: string}}>)[0]!.delta.content ?? '')
+      .join('')
+
+    // One thinking panel only — no nested or duplicate <think> tag, the
+    // model's reasoning was hoisted inside ours.
+    const openCount = (fullText.match(/<think>/g) ?? []).length
+    const closeCount = (fullText.match(/<\/think>/g) ?? []).length
+    expect(openCount).toBe(1)
+    expect(closeCount).toBe(1)
+
+    const [thinkBody, answerBody] = fullText.split('</think>')
+    expect(thinkBody).toContain('t4t network:')
+    expect(thinkBody).toContain('- selecting provider')
+    expect(thinkBody).toContain('model reasoning:')
+    expect(thinkBody).toContain('step 1: parse')
+    expect(thinkBody).toContain('step 2: answer')
+
+    // The model's actual answer survives, with the original <think> stripped.
+    expect(answerBody?.trim()).toBe('42')
+    expect(answerBody).not.toContain('<think>')
+  })
+
+  it('leaves responses without a leading <think> block untouched', async () => {
+    harness = await startServer({
+      logger: silentLogger(),
+      fakeStreaming: true,
+      listModels: async () => [],
+      handleChat: async () => fakeCompletion('just answer'),
+    })
+
+    const sse = await readSse(harness.url, {
+      model: 'm',
+      messages: [{role: 'user', content: 'hi'}],
+      stream: true,
+    })
+
+    const fullText = parseChunks(sse)
+      .map(c => (c.choices as Array<{delta: {content?: string}}>)[0]!.delta.content ?? '')
+      .join('')
+
+    const [thinkBody, answerBody] = fullText.split('</think>')
+    expect(thinkBody).not.toContain('model reasoning:')
+    expect(answerBody?.trim()).toBe('just answer')
   })
 
   it('rejects stream:true when fakeStreaming is off', async () => {
@@ -198,14 +261,13 @@ describe('attachClientApi /v1/chat/completions streaming', () => {
       .map(c => (c.choices as Array<{delta: {content?: string}}>)[0]!.delta.content)
       .filter((s): s is string => typeof s === 'string')
       .join('')
-    // Error is rendered as a bullet inside the status block, then the
-    // block closes so nothing is left half-open in the rendered markdown.
-    expect(contents).toContain('- error: Error: no provider matches model=ghost')
-    expect(contents).toContain('</details>')
+    // Error is appended to the thinking block, then the block closes so
+    // nothing is left half-open in the rendered markdown.
+    expect(contents).toContain('error: Error: no provider matches model=ghost')
+    expect(contents).toContain('</think>')
   })
 
-  it('omits the <details> status block when response_format requests JSON', async () => {
-    let captured: ProgressEvent[] = []
+  it('omits the <think> block when response_format requests JSON', async () => {
     harness = await startServer({
       logger: silentLogger(),
       fakeStreaming: true,
@@ -226,23 +288,19 @@ describe('attachClientApi /v1/chat/completions streaming', () => {
       response_format: {type: 'json_object'},
     })
 
-    const chunks = parseChunks(sse)
-    const fullText = chunks
+    const fullText = parseChunks(sse)
       .map(c => (c.choices as Array<{delta: {content?: string}}>)[0]!.delta.content ?? '')
       .join('')
 
-    // No <details> noise — the assistant content is just the JSON the model
+    // No <think> noise — the assistant content is just the JSON the model
     // produced, so `JSON.parse(fullText)` works for the agent.
-    expect(fullText).not.toContain('<details')
+    expect(fullText).not.toContain('<think>')
     expect(fullText).not.toContain('selecting provider')
     expect(fullText).toBe('{"answer": 42}')
     expect(() => JSON.parse(fullText)).not.toThrow()
-
-    // Suppress unused-var lint on captured (kept for future expansion).
-    void captured
   })
 
-  it('omits the <details> status block when tools is non-empty', async () => {
+  it('omits the <think> block when tools is non-empty', async () => {
     harness = await startServer({
       logger: silentLogger(),
       fakeStreaming: true,
@@ -260,7 +318,7 @@ describe('attachClientApi /v1/chat/completions streaming', () => {
     const fullText = parseChunks(sse)
       .map(c => (c.choices as Array<{delta: {content?: string}}>)[0]!.delta.content ?? '')
       .join('')
-    expect(fullText).not.toContain('<details')
+    expect(fullText).not.toContain('<think>')
     expect(fullText).toBe('plain')
   })
 

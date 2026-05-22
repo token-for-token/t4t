@@ -74,19 +74,24 @@ export function attachClientApi(app: Express, deps: GatewayApiDeps): void {
  *       posting on-chain, waiting for PSS delivery) instead of staring at a
  *       blank assistant bubble.
  *
- *  Progress events are emitted inside a `<details type="status">` block at
- *  the head of the assistant turn. Open WebUI (and any Markdown-aware client)
- *  renders that block as a collapsed "status pill" visually separate from
- *  the assistant answer, so the user perceives two messages — a system-style
- *  status update streaming while the network does its work, then the AI
- *  answer once delivery completes. After the block closes, the actual model
- *  output streams as normal content.
+ *  Progress events are emitted inside a `<think>` block at the head of the
+ *  assistant turn — the de-facto reasoning-content convention used by
+ *  DeepSeek R1, o1, QwQ, and friends. Every chat client that supports
+ *  reasoning models (Open WebUI, LibreChat, Continue, Cline, Cursor,
+ *  Big-AGI…) already renders `<think>` as a collapsed "thinking" section
+ *  visually separate from the assistant answer. Headless SDKs see it as
+ *  plain content but most agents strip or fold it.
+ *
+ *  When the model's own response contains a leading `<think>…</think>` block
+ *  (reasoning models), we splice that into our gateway-progress block and
+ *  emit a single merged `<think>` so the user sees one unified thinking
+ *  panel ("network status + model reasoning") rather than two stacked ones.
  *
  *  We can't emit a literal mid-stream `role: 'system'` chunk because the
  *  OpenAI streaming protocol is single-message-per-request — clients latch
  *  the role from the first chunk and concatenate everything else into one
- *  bubble. The `<details type="status">` convention is the established way
- *  to get the two-message visual UX inside that constraint.
+ *  bubble. The `<think>` convention is what gets us the two-message visual
+ *  UX inside that constraint.
  */
 async function streamChat(
   res: Response,
@@ -132,25 +137,26 @@ async function streamChat(
 
   // Structured-output mode: the client expects the assistant content to be
   // parseable JSON (response_format) or to carry tool_calls instead of prose.
-  // A `<details>` prefix would invalidate JSON parsing and confuse tool-using
-  // agents, so we skip the status block entirely. SSE keepalive comments
+  // A `<think>` prefix would invalidate JSON parsing and confuse tool-using
+  // agents, so we skip the thinking block entirely. SSE keepalive comments
   // still flow during the wait, which is enough to prevent fetch / proxy
   // idle timeouts without polluting the assistant content.
   const structured = isStructuredMode(body)
 
-  let statusOpen = false
+  let thinkOpen = false
   if (!structured) {
-    // Open the status block. `done="false"` tells Open WebUI to keep the pill
-    // spinning until either the closing tag arrives or `done="true"` is set.
-    // The summary is what the user sees on the collapsed pill.
-    writeChunk({content: `<details type="status" done="false">\n<summary>t4t network</summary>\n\n`})
-    statusOpen = true
+    // Open the merged thinking block. We hold it open until handleChat
+    // resolves so the model's own <think> reasoning (if any) can be spliced
+    // in before we close — one unified collapsed panel rather than two.
+    writeChunk({content: `<think>\nt4t network:\n`})
+    thinkOpen = true
   }
 
-  const closeStatus = (): void => {
-    if (!statusOpen) return
-    statusOpen = false
-    writeChunk({content: `\n</details>\n\n`})
+  const closeThink = (extra?: string): void => {
+    if (!thinkOpen) return
+    thinkOpen = false
+    const tail = extra ? `\n${extra.trim()}\n` : ''
+    writeChunk({content: `${tail}</think>\n\n`})
   }
 
   try {
@@ -160,14 +166,20 @@ async function streamChat(
       if (line) writeChunk({content: line})
     })
 
-    closeStatus()
-
-    // The response arrived from Swarm as one complete blob — there's nothing
-    // to actually stream. Emit it as a single content chunk so the assistant
-    // bubble pops in atomically the moment delivery lands, instead of
-    // pretending to stream with cosmetic 32-char slices.
     const fullContent = completion.choices[0]?.message.content ?? ''
-    if (fullContent) writeChunk({content: fullContent})
+
+    if (structured) {
+      // No thinking wrapper — emit content verbatim so JSON.parse / tool-call
+      // extractors get exactly what the provider produced.
+      if (fullContent) writeChunk({content: fullContent})
+    } else {
+      // Merge the model's own <think>…</think> (if any) into our network
+      // progress block so the user sees a single thinking panel containing
+      // network status followed by model reasoning.
+      const {thinking, rest} = splitLeadingThink(fullContent)
+      closeThink(thinking ? `\nmodel reasoning:\n${thinking}` : undefined)
+      if (rest) writeChunk({content: rest})
+    }
 
     writeChunk({}, completion.choices[0]?.finish_reason ?? 'stop')
     res.write('data: [DONE]\n\n')
@@ -182,10 +194,9 @@ async function streamChat(
     } else {
       // Surface the failure to the user inside the assistant turn rather than
       // dropping the socket — the latter looks like a network error to the
-      // client, this is at least diagnostic. We close the status block first
-      // so the error renders as the assistant answer, not as a status line.
-      writeChunk({content: `- error: ${escapeMarkdown(String(err))}\n`})
-      closeStatus()
+      // client, this is at least diagnostic. We close the thinking block
+      // first so the error renders as the assistant answer, not reasoning.
+      closeThink(`error: ${escapeMarkdown(String(err))}`)
       writeChunk({}, 'stop')
       res.write('data: [DONE]\n\n')
     }
@@ -193,6 +204,17 @@ async function streamChat(
     clearInterval(heartbeat)
     res.end()
   }
+}
+
+/** Pull a leading `<think>…</think>` block off the model's response content.
+ *  Reasoning models (DeepSeek R1, QwQ, o1-style local backends) emit their
+ *  reasoning as a `<think>` block followed by the actual answer; we want to
+ *  hoist that into our merged thinking panel rather than leave it embedded
+ *  in the final answer where it duplicates the reasoning UI. */
+function splitLeadingThink(content: string): {thinking: string; rest: string} {
+  const match = content.match(/^\s*<think>([\s\S]*?)<\/think>\s*/i)
+  if (!match) return {thinking: '', rest: content}
+  return {thinking: match[1]!.trim(), rest: content.slice(match[0].length)}
 }
 
 /** True if the client expects a machine-parseable assistant message:
