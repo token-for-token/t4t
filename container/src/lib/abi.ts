@@ -119,6 +119,18 @@ export const providerRegistryAbi = [
       {name: 'nextCursor', type: 'uint256'},
     ],
   },
+  // Custom errors from ProviderRegistry.sol — surfaced when the gateway/provider
+  // calls `register`, `addStake`, `slash` (via JobEscrow), etc.
+  {type: 'error', name: 'EscrowAlreadySet', inputs: []},
+  {type: 'error', name: 'NotEscrow', inputs: []},
+  {type: 'error', name: 'NotOwner', inputs: []},
+  {type: 'error', name: 'NotRegistered', inputs: []},
+  {type: 'error', name: 'AlreadyRegistered', inputs: []},
+  {type: 'error', name: 'InsufficientStake', inputs: []},
+  {type: 'error', name: 'StillBonded', inputs: []},
+  {type: 'error', name: 'StillActive', inputs: []},
+  {type: 'error', name: 'OpenJobsRemain', inputs: []},
+  {type: 'error', name: 'TransferFailed', inputs: []},
 ] as const
 
 export const jobEscrowAbi = [
@@ -205,6 +217,19 @@ export const jobEscrowAbi = [
       {name: 'paid', type: 'uint128'},
     ],
   },
+  // Custom errors from JobEscrow.sol — listed so viem can decode revert reasons
+  // (`postJob`/`cancelJob`/`timeoutJob` failures otherwise surface as raw 4-byte
+  // selectors like "0x5c975bda" instead of "BadStatus()").
+  {type: 'error', name: 'NotProvider', inputs: []},
+  {type: 'error', name: 'NotClient', inputs: []},
+  {type: 'error', name: 'BadStatus', inputs: []},
+  {type: 'error', name: 'DeadlinePassed', inputs: []},
+  {type: 'error', name: 'DeadlineNotPassed', inputs: []},
+  {type: 'error', name: 'PaymentTooHigh', inputs: []},
+  {type: 'error', name: 'ProviderNotLive', inputs: []},
+  {type: 'error', name: 'InsufficientStakeForJob', inputs: []},
+  {type: 'error', name: 'TransferFailed', inputs: []},
+  {type: 'error', name: 'BadDeadline', inputs: []},
 ] as const
 
 export const erc20Abi = [
