@@ -204,6 +204,93 @@ describe('attachClientApi /v1/chat/completions streaming', () => {
     expect(contents).toContain('</details>')
   })
 
+  it('omits the <details> status block when response_format requests JSON', async () => {
+    let captured: ProgressEvent[] = []
+    harness = await startServer({
+      logger: silentLogger(),
+      fakeStreaming: true,
+      listModels: async () => [],
+      handleChat: async (_req, onProgress) => {
+        // Emit a few progress events; in structured mode they must not
+        // surface as content even though they still fire internally.
+        onProgress?.({kind: 'selecting_provider', modelId: 'm'})
+        onProgress?.({kind: 'job_posted', txHash: '0x' + 'aa'.repeat(32), onChainJobId: '0x' + 'bb'.repeat(32)})
+        return fakeCompletion('{"answer": 42}')
+      },
+    })
+
+    const sse = await readSse(harness.url, {
+      model: 'm',
+      messages: [{role: 'user', content: 'json please'}],
+      stream: true,
+      response_format: {type: 'json_object'},
+    })
+
+    const chunks = parseChunks(sse)
+    const fullText = chunks
+      .map(c => (c.choices as Array<{delta: {content?: string}}>)[0]!.delta.content ?? '')
+      .join('')
+
+    // No <details> noise — the assistant content is just the JSON the model
+    // produced, so `JSON.parse(fullText)` works for the agent.
+    expect(fullText).not.toContain('<details')
+    expect(fullText).not.toContain('selecting provider')
+    expect(fullText).toBe('{"answer": 42}')
+    expect(() => JSON.parse(fullText)).not.toThrow()
+
+    // Suppress unused-var lint on captured (kept for future expansion).
+    void captured
+  })
+
+  it('omits the <details> status block when tools is non-empty', async () => {
+    harness = await startServer({
+      logger: silentLogger(),
+      fakeStreaming: true,
+      listModels: async () => [],
+      handleChat: async () => fakeCompletion('plain'),
+    })
+
+    const sse = await readSse(harness.url, {
+      model: 'm',
+      messages: [{role: 'user', content: 'use a tool'}],
+      stream: true,
+      tools: [{type: 'function', function: {name: 'noop', parameters: {type: 'object'}}}],
+    })
+
+    const fullText = parseChunks(sse)
+      .map(c => (c.choices as Array<{delta: {content?: string}}>)[0]!.delta.content ?? '')
+      .join('')
+    expect(fullText).not.toContain('<details')
+    expect(fullText).toBe('plain')
+  })
+
+  it('surfaces structured-mode errors via finish_reason instead of polluting content', async () => {
+    harness = await startServer({
+      logger: silentLogger(),
+      fakeStreaming: true,
+      listModels: async () => [],
+      handleChat: async () => {
+        throw new Error('boom')
+      },
+    })
+
+    const sse = await readSse(harness.url, {
+      model: 'm',
+      messages: [{role: 'user', content: 'hi'}],
+      stream: true,
+      response_format: {type: 'json_object'},
+    })
+
+    const chunks = parseChunks(sse)
+    const fullText = chunks
+      .map(c => (c.choices as Array<{delta: {content?: string}}>)[0]!.delta.content ?? '')
+      .join('')
+    expect(fullText).toBe('')
+
+    const last = chunks[chunks.length - 1]!
+    expect((last.choices as Array<{finish_reason: string}>)[0]!.finish_reason).toBe('error')
+  })
+
   it('non-streaming requests still return a single JSON body', async () => {
     harness = await startServer({
       logger: silentLogger(),

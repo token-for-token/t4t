@@ -130,11 +130,22 @@ async function streamChat(
   // seen a delta carrying the role.
   writeChunk({role: 'assistant'})
 
-  // Open the status block. `done="false"` tells Open WebUI to keep the pill
-  // spinning until either the closing tag arrives or `done="true"` is set.
-  // The summary is what the user sees on the collapsed pill.
-  let statusOpen = true
-  writeChunk({content: `<details type="status" done="false">\n<summary>t4t network</summary>\n\n`})
+  // Structured-output mode: the client expects the assistant content to be
+  // parseable JSON (response_format) or to carry tool_calls instead of prose.
+  // A `<details>` prefix would invalidate JSON parsing and confuse tool-using
+  // agents, so we skip the status block entirely. SSE keepalive comments
+  // still flow during the wait, which is enough to prevent fetch / proxy
+  // idle timeouts without polluting the assistant content.
+  const structured = isStructuredMode(body)
+
+  let statusOpen = false
+  if (!structured) {
+    // Open the status block. `done="false"` tells Open WebUI to keep the pill
+    // spinning until either the closing tag arrives or `done="true"` is set.
+    // The summary is what the user sees on the collapsed pill.
+    writeChunk({content: `<details type="status" done="false">\n<summary>t4t network</summary>\n\n`})
+    statusOpen = true
+  }
 
   const closeStatus = (): void => {
     if (!statusOpen) return
@@ -144,6 +155,7 @@ async function streamChat(
 
   try {
     const completion = await deps.handleChat({...body, stream: false}, e => {
+      if (structured) return
       const line = renderProgress(e)
       if (line) writeChunk({content: line})
     })
@@ -161,18 +173,42 @@ async function streamChat(
     res.write('data: [DONE]\n\n')
   } catch (err) {
     deps.logger.error({err}, 'chat completion failed (stream)')
-    // Surface the failure to the user inside the assistant turn rather than
-    // dropping the socket — the latter looks like a network error to the
-    // client, this is at least diagnostic. We close the status block first
-    // so the error renders as the assistant answer, not as a status line.
-    writeChunk({content: `- error: ${escapeMarkdown(String(err))}\n`})
-    closeStatus()
-    writeChunk({}, 'stop')
-    res.write('data: [DONE]\n\n')
+    if (structured) {
+      // Structured-mode clients can't render a markdown error bullet. Set a
+      // distinct finish_reason so the SDK / agent surfaces the failure rather
+      // than handing back an empty assistant message that looks successful.
+      writeChunk({}, 'error')
+      res.write('data: [DONE]\n\n')
+    } else {
+      // Surface the failure to the user inside the assistant turn rather than
+      // dropping the socket — the latter looks like a network error to the
+      // client, this is at least diagnostic. We close the status block first
+      // so the error renders as the assistant answer, not as a status line.
+      writeChunk({content: `- error: ${escapeMarkdown(String(err))}\n`})
+      closeStatus()
+      writeChunk({}, 'stop')
+      res.write('data: [DONE]\n\n')
+    }
   } finally {
     clearInterval(heartbeat)
     res.end()
   }
+}
+
+/** True if the client expects a machine-parseable assistant message:
+ *    - `response_format` is set to anything other than `text` (json_object,
+ *      json_schema, …) — prepending `<details>` HTML would break JSON.parse.
+ *    - `tools` array is non-empty — the agent is going to feed the assistant
+ *      reply into its own parser to detect tool calls / extract code.
+ *  In either case we still keep the SSE connection live with comment
+ *  heartbeats, we just don't pollute `delta.content`. */
+function isStructuredMode(req: OpenAIChatRequest): boolean {
+  const r = req as Record<string, unknown>
+  const responseFormat = r.response_format as {type?: string} | undefined
+  if (responseFormat && responseFormat.type && responseFormat.type !== 'text') return true
+  const tools = r.tools
+  if (Array.isArray(tools) && tools.length > 0) return true
+  return false
 }
 
 /** Format a lifecycle event as a single bullet line inside the `<details
