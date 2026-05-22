@@ -193,9 +193,16 @@ export async function ensureManagedStamp(deps: EnsureStampDeps): Promise<Managed
       'Disable dry-run or pre-purchase a batch labelled "' + opts.label + '".',
     )
   }
+  // immutableFlag must be explicitly false: bee-js only sets the header when
+  // we pass the value, and Bee's server-side default is immutable=true. An
+  // immutable batch can never be diluted, which kills `withBatchRecovery`'s
+  // emergency-dilute path the moment a single bucket fills. PSS chunks and
+  // ephemeral request/response chunks are write-once-deliver-once for us, so
+  // chunk-overwrite (the only practical downside of mutable) is harmless.
   const batchId = await bee.createPostageBatch(amount, opts.depth, {
     label: opts.label,
     waitForUsable: true,
+    immutableFlag: false,
   })
   const idStr = batchId.toString()
   log.info({batchID: idStr}, 'postage batch bought and usable')
