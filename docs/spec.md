@@ -377,18 +377,17 @@ With `T4T_FAKE_STREAMING=false`: 400.
 Additional env:
 | Variable | Default | Description |
 |---|---|---|
-| `OPENAI_BASE_URL` | `http://host.docker.internal:11434` | OpenAI-compatible inference backend (Ollama, vLLM, LiteLLM, llama.cpp, OpenAI itself). |
-| `OPENAI_API_KEY` | _unset_ | Bearer token for backends that require auth (vLLM with `--api-key`, OpenAI, etc.). Omit for Ollama. |
+| `T4T_ENDPOINTS_FILE` | `${T4T_DATA_DIR}/endpoints.json` | Path to a JSON array of `{name, url, apiKey?, models?}` entries describing every OpenAI-compatible inference backend the provider routes to (Ollama, vLLM, LiteLLM, llama.cpp, OpenAI, …). At least one entry required. The optional `models` block declares per-million-token prices (BZZ decimals, keyed by the backend-native model id); declared prices win over on-chain values on startup, models discovered from `/v1/models` are auto-added on first boot, and Admin-UI edits are mirrored back into the file atomically. If two backends advertise the same model id, each is registered on-chain as `<endpoint-name>/<modelId>` so the operator can publish independent prices; the provider rewrites `model` to the backend-native id before calling out. Models served by a single backend keep their bare id. |
 | `T4T_INPUT_PRICE_DEFAULT` | required | xBZZ wei per 1M prompt tokens, applied to newly-discovered models only. Per-model prices live on-chain in `ModelOffering.inputPricePerMillionTokens` and are editable from the admin UI. |
 | `T4T_OUTPUT_PRICE_DEFAULT` | required | xBZZ wei per 1M completion tokens, same semantics as the input default. |
 | `T4T_HEARTBEAT_INTERVAL_SECONDS` | `300` | |
 | `T4T_MAX_CONCURRENT_JOBS` | `2` | |
 
 Behavior:
-1. On start: read state, register if needed, query the backend's `GET /v1/models`, read existing on-chain offerings, build merged set (preserve any per-model prices already on-chain; apply `T4T_INPUT_PRICE_DEFAULT` and `T4T_OUTPUT_PRICE_DEFAULT` to newly-seen models), publish via `updateOfferings` only if the merged set differs from chain, begin heartbeat loop. To stop serving a model, remove it from the backend and restart. To change a model's prices, use the admin UI's Models page (writes via `updateOfferings`). At claim time: `actualPayment = (inputPrice·promptTokens + outputPrice·completionTokens) / 1_000_000`.
+1. On start: read state, register if needed, load the endpoints file, query each backend's `GET /v1/models` and aggregate the unique model ids, read existing on-chain offerings, build merged set (preserve any per-model prices already on-chain; apply `T4T_INPUT_PRICE_DEFAULT` and `T4T_OUTPUT_PRICE_DEFAULT` to newly-seen models), publish via `updateOfferings` only if the merged set differs from chain, begin heartbeat loop. To stop serving a model, remove it from the backend (or drop the backend from `endpoints.json`) and restart. To change a model's prices, use the admin UI's Models page (writes via `updateOfferings`). At claim time: `actualPayment = (inputPrice·promptTokens + outputPrice·completionTokens) / 1_000_000`.
 2. Subscribe to `t4t:provider:<address>`.
 3. On `job_notify`: validate registry pricing matches, ACK within `ACK_WINDOW / 2`.
-4. Fetch + decrypt request, call the inference backend at `OPENAI_BASE_URL/v1/chat/completions`, encrypt + upload response, send `job_deliver`.
+4. Fetch + decrypt request, look up the backend serving `modelId`, call its `/v1/chat/completions`, encrypt + upload response, send `job_deliver`.
 5. Call `claimJob` on the chain.
 
 ---

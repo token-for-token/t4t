@@ -26,7 +26,16 @@ import {providerTopic} from '../../lib/envelope'
 import {EciesCipher} from '../../lib/crypto'
 import {JobPostedIndex} from '../../lib/job-index'
 import {JobsDb} from '../../lib/jobs-db'
-import {InferenceClient} from '../../lib/inference'
+import {InferenceClient, InferenceRouter} from '../../lib/inference'
+import {
+  EndpointsFileError,
+  endpointsFilePath,
+  loadEndpoints,
+  setDeclaredPrice,
+  writeEndpoints,
+  type InferenceEndpoint,
+} from '../../lib/endpoints'
+import {parseBzzToPlur} from '../../lib/admin-html'
 import {loadOrCreatePssKey} from '../../lib/keys'
 import type {Hex, ModelOffering} from '../../lib/types'
 import {startAdminServer} from './admin'
@@ -235,33 +244,113 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
     )
   }
 
-  const inference = new InferenceClient(cfg.OPENAI_BASE_URL, cfg.OPENAI_API_KEY)
-  // Offerings = whatever the backend currently serves. To stop offering a model,
-  // remove it from the backend (e.g. `ollama rm <model>`) and restart.
-  const modelIds = await inference.listModels().catch(err => {
-    log.fatal({err, backend: cfg.OPENAI_BASE_URL}, 'inference backend unreachable; cannot determine offerings')
+  let endpoints: InferenceEndpoint[]
+  try {
+    endpoints = loadEndpoints(cfg.T4T_DATA_DIR)
+  } catch (err) {
+    if (err instanceof EndpointsFileError) {
+      log.fatal(
+        {path: err.path},
+        `${err.message} — example: [{"name":"ollama","url":"http://ollama:11434"},{"name":"openai","url":"https://api.openai.com","apiKey":"sk-..."}]`,
+      )
+    } else {
+      log.fatal({err, path: endpointsFilePath(cfg.T4T_DATA_DIR)}, 'failed to load inference endpoints')
+    }
     process.exit(1)
-  })
-  // Merge: preserve any on-chain price the operator has set previously
-  // (e.g. edited via the admin UI). Only newly-seen models get env defaults.
+  }
+  const inference = new InferenceRouter(
+    endpoints.map(e => new InferenceClient(e.name, e.url, e.apiKey)),
+    log,
+  )
+  log.info({endpoints: endpoints.map(e => ({name: e.name, url: e.url}))}, 'inference endpoints loaded')
+  // Offerings = whatever the configured backends currently serve. To stop
+  // offering a model, remove it from the backend (e.g. `ollama rm <model>`)
+  // or drop the backend from endpoints.json and restart.
+  const modelIds = await inference.listModels()
+  if (modelIds.length === 0) {
+    log.fatal(
+      {endpoints: endpoints.map(e => e.name)},
+      'no models reachable on any configured inference endpoint; cannot determine offerings',
+    )
+    process.exit(1)
+  }
+  // Merge precedence (high → low): endpoints.json declared price → on-chain
+  // price (preserves prior UI edits) → env defaults. UI edits write the new
+  // price back to endpoints.json on save, so prior edits survive a restart
+  // even if the chain read fails.
   const onChainOfferings = await getOfferings(chain, chain.address).catch(() => [] as ModelOffering[])
   const existingByModel = new Map(onChainOfferings.map(o => [o.modelId, o]))
-  const offeringsByModel = new Map<string, ModelOffering>()
-  for (const modelId of modelIds) {
+  function declaredPriceFor(exposedId: string): {inputPlur: bigint; outputPlur: bigint} | null {
+    const route = inference.routeFor(exposedId)
+    if (!route) return null
+    const endpoint = endpoints.find(e => e.name === route.endpointName)
+    const declared = endpoint?.models?.[route.backendModelId]
+    if (!declared) return null
+    try {
+      return {inputPlur: parseBzzToPlur(declared.inputBzz), outputPlur: parseBzzToPlur(declared.outputBzz)}
+    } catch (err) {
+      log.warn({err, exposedId}, 'declared price in endpoints.json is invalid; ignoring')
+      return null
+    }
+  }
+  function resolveOffering(modelId: string): ModelOffering {
     const prior = existingByModel.get(modelId)
-    offeringsByModel.set(modelId, {
+    const declared = declaredPriceFor(modelId)
+    return {
       modelId,
-      inputPricePerMillionTokens: prior?.inputPricePerMillionTokens ?? cfg.T4T_INPUT_PRICE_DEFAULT,
-      outputPricePerMillionTokens: prior?.outputPricePerMillionTokens ?? cfg.T4T_OUTPUT_PRICE_DEFAULT,
+      inputPricePerMillionTokens:
+        declared?.inputPlur ?? prior?.inputPricePerMillionTokens ?? cfg.T4T_INPUT_PRICE_DEFAULT,
+      outputPricePerMillionTokens:
+        declared?.outputPlur ?? prior?.outputPricePerMillionTokens ?? cfg.T4T_OUTPUT_PRICE_DEFAULT,
       maxContextTokens: prior?.maxContextTokens ?? 0n,
       maxLatencySeconds: prior?.maxLatencySeconds ?? 120n,
-    })
+    }
   }
+  const offeringsByModel = new Map<string, ModelOffering>()
+  for (const modelId of modelIds) offeringsByModel.set(modelId, resolveOffering(modelId))
+
+  // Reflects the live offerings map back into endpoints.json so the file is
+  // always a complete inventory of what the provider serves — even for models
+  // first discovered from `/v1/models` with env-default prices. No-op when the
+  // file already matches.
+  function syncEndpointsFile(): void {
+    let dirty = false
+    for (const [exposedId, offering] of offeringsByModel) {
+      const route = inference.routeFor(exposedId)
+      if (!route) continue
+      const endpoint = endpoints.find(e => e.name === route.endpointName)
+      if (!endpoint) continue
+      if (
+        setDeclaredPrice(
+          endpoint,
+          route.backendModelId,
+          offering.inputPricePerMillionTokens,
+          offering.outputPricePerMillionTokens,
+        )
+      ) {
+        dirty = true
+      }
+    }
+    if (!dirty) return
+    try {
+      writeEndpoints(cfg.T4T_DATA_DIR, endpoints)
+      log.info('endpoints.json synced with current offerings')
+    } catch (err) {
+      log.warn({err}, 'failed to sync endpoints.json with current offerings')
+    }
+  }
+
+  // First-run sync: writes any newly-discovered models (with their resolved
+  // prices) into the file so operators can see everything in one place.
+  syncEndpointsFile()
 
   async function publishOfferings(): Promise<void> {
     const arr = [...offeringsByModel.values()]
     if (arr.length === 0) {
-      log.warn({backend: cfg.OPENAI_BASE_URL}, 'backend reports zero models — provider will not receive jobs until at least one model is loaded')
+      log.warn(
+        {endpoints: endpoints.map(e => e.name)},
+        'no models reachable on any configured endpoint — provider will not receive jobs until at least one model is loaded',
+      )
       return
     }
     await updateOfferings(chain, arr)
@@ -283,14 +372,13 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
   else log.info({count: offeringsByModel.size}, 'offerings already match on-chain; skip publish')
 
   function buildOffering(modelId: string): ModelOffering {
-    const prior = offeringsByModel.get(modelId) ?? existingByModel.get(modelId)
-    return {
-      modelId,
-      inputPricePerMillionTokens: prior?.inputPricePerMillionTokens ?? cfg.T4T_INPUT_PRICE_DEFAULT,
-      outputPricePerMillionTokens: prior?.outputPricePerMillionTokens ?? cfg.T4T_OUTPUT_PRICE_DEFAULT,
-      maxContextTokens: prior?.maxContextTokens ?? 0n,
-      maxLatencySeconds: prior?.maxLatencySeconds ?? 120n,
-    }
+    // The in-memory offerings map carries prior UI edits — prefer it over a
+    // fresh resolve so heartbeat ticks don't undo an unsaved declared-price
+    // override. New models that appeared after startup fall through to the
+    // resolver and pick up JSON declarations / on-chain / defaults.
+    const cached = offeringsByModel.get(modelId)
+    if (cached) return cached
+    return resolveOffering(modelId)
   }
 
   function offeringsDiffer(next: Map<string, ModelOffering>): boolean {
@@ -339,6 +427,7 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
         offeringsByModel.clear()
         for (const [k, v] of next) offeringsByModel.set(k, v)
         log.info({models: [...offeringsByModel.keys()]}, 'offerings re-published after backend change')
+        syncEndpointsFile()
       } catch (err) {
         log.warn({err}, 'updateOfferings failed; keeping previous on-chain set')
       }
@@ -512,6 +601,9 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
     logger: log,
     offerings: offeringsByModel,
     publishOfferings,
+    endpoints,
+    dataDir: cfg.T4T_DATA_DIR,
+    router: inference,
   })
 
   if (cfg.T4T_DEACTIVATE_ON_SHUTDOWN) {

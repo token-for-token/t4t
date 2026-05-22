@@ -16,16 +16,46 @@ ollama pull llama3:8b
 ollama pull mistral:7b
 ```
 
-On startup the container queries the backend's `GET /v1/models` and registers every model it finds as an on-chain offering. To stop serving a model, remove it from the backend (`ollama rm <model>` or unload it from vLLM) and restart the container.
+On startup the container queries each configured backend's `GET /v1/models` and registers every model it finds as an on-chain offering. To stop serving a model, remove it from the backend (`ollama rm <model>` or unload it from vLLM) — or drop the backend from `endpoints.json` — and restart the container.
 
-## 3. Configure
+## 3. Configure inference endpoints
+
+Create `data/provider/endpoints.json` listing every OpenAI-compatible backend the provider should route to. Each entry is `{name, url, apiKey?, models?}`:
+
+```json
+[
+  {
+    "name": "ollama",
+    "url": "http://host.docker.internal:11434",
+    "models": {
+      "llama3": {"inputBzz": "0.3", "outputBzz": "1.5"}
+    }
+  },
+  {
+    "name": "openai",
+    "url": "https://api.openai.com",
+    "apiKey": "sk-...",
+    "models": {
+      "gpt-4o-mini": {"inputBzz": "0.15", "outputBzz": "0.6"}
+    }
+  }
+]
+```
+
+`name` is a short label (no `/`) that appears in logs and acts as the disambiguation prefix when two backends serve the same model id. `url` is the base URL — `/v1/chat/completions` and `/v1/models` are appended at call time, so don't include them here. `apiKey` is optional (omit for Ollama; required for OpenAI / vLLM-with-`--api-key`).
+
+`models` is optional. Each entry is keyed by the **backend-native** model id (e.g. `llama3`, not the prefixed `ollama/llama3`) and gives the per-million-token price as a BZZ decimal string. On startup, declared prices win over any on-chain value, which in turn wins over the env defaults. Any model discovered from a backend's `/v1/models` that isn't yet listed here is added on first run with the resolved price, so after one boot the file is a complete inventory. Saving a new price on the admin UI's Models page writes the value back atomically too — so prices in JSON, in memory, and on-chain stay in sync.
+
+If two backends advertise the same model id (e.g. both Ollama and OpenAI serve `llama3`), the provider registers each one on-chain under `<endpoint-name>/<modelId>` — so `ollama/llama3` and `openai/llama3` become two distinct offerings, each with its own price (editable on the Models page or directly in JSON). Clients then request whichever flavour they want. Models served by a single backend keep their bare id.
+
+Override the path with `T4T_ENDPOINTS_FILE`.
+
+## 4. Configure the rest
 
 | Var | Example |
 |---|---|
 | `T4T_MODE` | `provider` |
 | `BEE_API_URL` | `http://localhost:1633` |
-| `OPENAI_BASE_URL` | `http://host.docker.internal:11434` (Ollama) or `http://vllm:8000` (vLLM) |
-| `OPENAI_API_KEY` | _optional_ — set for vLLM with `--api-key` or cloud backends |
 | `GNOSIS_RPC_URL` | `https://rpc.gnosischain.com` |
 | `REGISTRY_ADDRESS` | `0x…` |
 | `ESCROW_ADDRESS` | `0x…` |
@@ -43,10 +73,10 @@ On startup the container queries the backend's `GET /v1/models` and registers ev
 | `T4T_HEARTBEAT_INTERVAL_SECONDS` | `300` |
 | `T4T_MAX_CONCURRENT_JOBS` | `2` |
 
-## 4. Run
+## 5. Run
 
 ```bash
-docker run --rm --env-file .env t4t:dev
+docker run --rm --env-file .env -v $PWD/data/provider:/data t4t:dev
 ```
 
 On first boot the container:
@@ -56,7 +86,7 @@ On first boot the container:
 3. Starts a heartbeat loop (`heartbeat()` every 5 min).
 4. Subscribes to `t4t:provider:<your-address>` over PSS.
 
-## 5. Slashing — read this
+## 6. Slashing — read this
 
 If you fail to ACK within 30s **or** ACK and miss the delivery deadline, your stake is slashed:
 
@@ -65,6 +95,6 @@ If you fail to ACK within 30s **or** ACK and miss the delivery deadline, your st
 
 The slashed amount is **burned** — sent to `ProviderRegistry.BURN_ADDRESS` (`0x…dEaD`). Neither the client nor any treasury receives a share, which removes the inverse incentive for clients to grief providers into failing. Don't oversubscribe — the registry enforces `(openJobs + 1) × 3 × maxPayment ≤ stake` at `postJob` time.
 
-## 6. Withdrawing
+## 7. Withdrawing
 
 Call `deactivate()`, wait `UNBONDING_PERIOD` (2 days) and for all open jobs to settle, then call `withdrawStake()`.

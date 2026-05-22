@@ -110,8 +110,9 @@ calls `JobEscrow.ackJob(jobId)` on-chain (so the client can't `cancelJob` on
 
 ### 7. Provider: fetch + decrypt + infer
 Worker fetches `requestHash` from Swarm, decrypts with the provider's PSS
-private key (separate from the wallet key — see commit `98974a1`), then proxies
-the decoded body to the configured OpenAI-compatible backend at `OPENAI_BASE_URL`.
+private key (separate from the wallet key — see commit `98974a1`), then routes
+the decoded body to whichever OpenAI-compatible backend (from `endpoints.json`)
+advertised the requested `modelId`.
 
 → [container/src/modes/provider/worker.ts](container/src/modes/provider/worker.ts) ·
 [container/src/lib/inference.ts](container/src/lib/inference.ts)

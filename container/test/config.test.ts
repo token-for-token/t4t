@@ -60,7 +60,7 @@ describe('loadConfig (provider)', () => {
 })
 
 describe('loadAdminConfig', () => {
-  it('parses without T4T_MODE or OPENAI_BASE_URL', () => {
+  it('parses without T4T_MODE or inference endpoints', () => {
     withEnv(
       {
         BEE_API_URL: 'http://bee:1633',
