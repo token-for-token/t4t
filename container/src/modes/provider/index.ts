@@ -306,8 +306,31 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
       maxLatencySeconds: prior?.maxLatencySeconds ?? 120n,
     }
   }
+  // Probe-filter at startup too: `inference.listModels()` returns whatever the
+  // backends advertise on `/v1/models`, but Groq (and similar) lists STT/TTS
+  // models like whisper / orpheus that 400 on /v1/chat/completions. If we
+  // published the raw list, on-chain would show e.g. `whisper-large-v3` until
+  // the first healthTick filtered it out, and the gateway's /models page would
+  // surface a broken model in the meantime. Probing here costs ~one /v1/chat
+  // round-trip per model on cold start — acceptable.
+  const liveModelIds: string[] = []
+  for (const id of modelIds) {
+    try {
+      await inference.probeModel(id)
+      liveModelIds.push(id)
+    } catch (err) {
+      log.warn({err, model: id}, 'startup probe failed; excluding from initial offerings')
+    }
+  }
+  if (liveModelIds.length === 0) {
+    log.fatal(
+      {endpoints: endpoints.map(e => e.name), discovered: modelIds.length},
+      'no models survived startup probe; cannot publish offerings',
+    )
+    process.exit(1)
+  }
   const offeringsByModel = new Map<string, ModelOffering>()
-  for (const modelId of modelIds) offeringsByModel.set(modelId, resolveOffering(modelId))
+  for (const modelId of liveModelIds) offeringsByModel.set(modelId, resolveOffering(modelId))
 
   // Reflects the live offerings map back into endpoints.json so the file is
   // always a complete inventory of what the provider serves — even for models
