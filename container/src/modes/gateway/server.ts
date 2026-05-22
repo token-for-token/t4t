@@ -57,7 +57,8 @@ export function attachClientApi(app: Express, deps: GatewayApiDeps): void {
       res.json(completion)
     } catch (err) {
       deps.logger.error({err}, 'chat completion failed')
-      res.status(502).json({error: {message: String(err)}})
+      const status = (err as {httpStatus?: number}).httpStatus ?? 502
+      res.status(status).json({error: {message: String(err)}})
     }
   })
 }

@@ -234,6 +234,25 @@ export async function listProviders(
 
 // ---------- JobEscrow ----------
 
+/** Thrown by `postJob` when the on-chain call can't possibly succeed. Caller
+ *  decides how to surface it (the gateway turns it into an OpenAI-compatible
+ *  4xx error). Carries `httpStatus` so the gateway doesn't have to switch on
+ *  message strings. */
+export class PostJobPreflightError extends Error {
+  constructor(message: string, readonly httpStatus: number = 402) {
+    super(message)
+    this.name = 'PostJobPreflightError'
+  }
+  // Strip the "Error: " prefix so chat clients render the bare message.
+  override toString(): string {
+    return this.message
+  }
+}
+
+function formatBzz(plur: bigint): string {
+  return (Number(plur) / 1e16).toFixed(4) + ' BZZ'
+}
+
 export async function postJob(
   c: ChainClient,
   args: {
@@ -244,21 +263,112 @@ export async function postJob(
     deliveryDeadline: number
   },
 ): Promise<{txHash: Hex; jobId: Hex}> {
-  const txHash = await c.wallet.writeContract({
-    chain: c.wallet.chain!,
-    account: c.wallet.account!,
-    address: c.escrow,
-    abi: jobEscrowAbi,
-    functionName: 'postJob',
-    args: [args.provider, args.requestHash, args.modelId, args.maxPayment, BigInt(args.deliveryDeadline)],
-  })
-  const receipt = await c.pub.waitForTransactionReceipt({hash: txHash})
-  const events = parseEventLogs({abi: jobEscrowAbi, eventName: 'JobPosted', logs: receipt.logs})
-  const ev = events[0]
-  if (!ev) throw new Error('postJob: JobPosted event missing from receipt')
-  const jobId = ev.args.jobId as Hex
-  emit(c, {kind: 'postJob', hash: txHash, toAddress: c.escrow, note: `model=${args.modelId} jobId=${jobId}`})
-  return {txHash, jobId}
+  // Pre-flight balance check — the xBZZ ERC20's transferFrom reverts with an
+  // opaque "ERC20: insufficient balance" string when the gateway wallet is
+  // underfunded, which viem surfaces as just "execution reverted". Catch it
+  // here so the operator sees a clean message naming the wallet + the gap.
+  const balance = await readXbzzBalance(c, c.address)
+  if (balance < args.maxPayment) {
+    const shortfall = args.maxPayment - balance
+    throw new PostJobPreflightError(
+      `gateway wallet out of xBZZ. balance ${formatBzz(balance)}, needed ${formatBzz(args.maxPayment)}. ` +
+        `top up wallet ${c.address} on Gnosis with at least ${formatBzz(shortfall)}.`,
+    )
+  }
+  try {
+    const txHash = await c.wallet.writeContract({
+      chain: c.wallet.chain!,
+      account: c.wallet.account!,
+      address: c.escrow,
+      abi: jobEscrowAbi,
+      functionName: 'postJob',
+      args: [args.provider, args.requestHash, args.modelId, args.maxPayment, BigInt(args.deliveryDeadline)],
+    })
+    const receipt = await c.pub.waitForTransactionReceipt({hash: txHash})
+    const events = parseEventLogs({abi: jobEscrowAbi, eventName: 'JobPosted', logs: receipt.logs})
+    const ev = events[0]
+    if (!ev) throw new Error('postJob: JobPosted event missing from receipt')
+    const jobId = ev.args.jobId as Hex
+    emit(c, {kind: 'postJob', hash: txHash, toAddress: c.escrow, note: `model=${args.modelId} jobId=${jobId}`})
+    return {txHash, jobId}
+  } catch (err) {
+    const friendly = mapPostJobRevert(err, c.address, args)
+    if (friendly) throw friendly
+    throw err
+  }
+}
+
+/** Translate a known JobEscrow custom-error selector (or the xBZZ ERC20 string
+ *  revert) into a one-line operator-readable message. Returns null for
+ *  anything we don't recognise — the caller rethrows the raw viem error. */
+function mapPostJobRevert(
+  err: unknown,
+  wallet: Address,
+  args: {provider: Address; maxPayment: bigint; deliveryDeadline: number},
+): PostJobPreflightError | null {
+  const data = extractRevertData(err)
+  // Custom errors (4-byte selectors keccak'd from the signature).
+  if (data) {
+    if (data.startsWith('0x90b8ec18')) {
+      // TransferFailed — xBZZ transferFrom returned false. Almost always means
+      // the gateway wallet doesn't have the maxPayment (allowance is checked
+      // separately and usually set to max).
+      return new PostJobPreflightError(
+        `gateway wallet out of xBZZ. needed ${formatBzz(args.maxPayment)}. ` +
+          `top up wallet ${wallet} on Gnosis.`,
+      )
+    }
+    if (data.startsWith('0x58ff6916')) {
+      // ProviderNotLive
+      return new PostJobPreflightError(
+        `selected provider ${args.provider} is not live (no recent heartbeat or deactivated). ` +
+          `try again — the gateway will pick a different provider.`,
+        503,
+      )
+    }
+    if (data.startsWith('0x785077af')) {
+      // InsufficientStakeForJob
+      return new PostJobPreflightError(
+        `provider ${args.provider} doesn't have enough free stake for this job. ` +
+          `try again — the gateway will pick a different provider.`,
+        503,
+      )
+    }
+    if (data.startsWith('0x710e1ce5')) {
+      // BadDeadline — gateway bug, not the operator's problem.
+      return new PostJobPreflightError(
+        `deliveryDeadline ${args.deliveryDeadline} is too close to now; bump T4T_DEFAULT_DEADLINE_SECONDS.`,
+        500,
+      )
+    }
+  }
+  // String revert from the xBZZ ERC20 ("ERC20: transfer amount exceeds balance").
+  const msg = (err as {message?: string})?.message ?? ''
+  if (/transfer amount exceeds balance|insufficient balance/i.test(msg)) {
+    return new PostJobPreflightError(
+      `gateway wallet out of xBZZ. needed ${formatBzz(args.maxPayment)}. ` +
+        `top up wallet ${wallet} on Gnosis.`,
+    )
+  }
+  return null
+}
+
+function extractRevertData(err: unknown): string | null {
+  // viem nests the raw revert data on the BaseError chain — walk it.
+  let e: unknown = err
+  for (let i = 0; i < 6 && e; i++) {
+    const cur = e as {data?: unknown; raw?: string; cause?: unknown}
+    if (typeof cur.raw === 'string' && cur.raw.startsWith('0x') && cur.raw.length >= 10) return cur.raw
+    if (typeof cur.data === 'string' && (cur.data as string).startsWith('0x') && (cur.data as string).length >= 10) {
+      return cur.data as string
+    }
+    if (cur.data && typeof cur.data === 'object') {
+      const inner = (cur.data as {data?: string}).data
+      if (typeof inner === 'string' && inner.startsWith('0x') && inner.length >= 10) return inner
+    }
+    e = cur.cause
+  }
+  return null
 }
 
 export async function ackJob(c: ChainClient, jobId: Hex): Promise<Hex> {
