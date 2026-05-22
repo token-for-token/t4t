@@ -266,9 +266,11 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
   >()
 
   // Per-job failure timers — schedule on-chain cancel/timeout when the provider
-  // fails liveness (spec §3). Both timers use a small grace beyond the on-chain
-  // deadline so `block.timestamp > deadline` holds when the tx mines.
-  const FAILURE_GRACE_SECONDS = 5
+  // fails liveness (spec §3). Both timers use a grace beyond the on-chain
+  // deadline so `block.timestamp > deadline` holds when the tx mines. 30s
+  // absorbs proposer clock skew + local RPC lag — 5s used to revert with
+  // DeadlineNotPassed when the gateway's wallclock raced the chain's view.
+  const FAILURE_GRACE_SECONDS = 30
   interface FailureSlot {
     onChainJobId: Hex
     deliveryDeadline: number
@@ -318,6 +320,32 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
   async function onAckTimeout(routing: Hex): Promise<void> {
     const slot = failureTimers.get(routing)
     if (!slot) return
+    // Chain-time guard: cancelJob reverts with DeadlineNotPassed if the local
+    // RPC's latest block is still <= ackDeadline. If the RPC is lagging behind
+    // wallclock, reschedule a short retry instead of burning the cancel attempt.
+    try {
+      const block = await chain.pub.getBlock()
+      const job = await chain.pub.readContract({
+        address: cfg.ESCROW_ADDRESS,
+        abi: jobEscrowAbi,
+        functionName: 'jobs',
+        args: [slot.onChainJobId],
+      }) as readonly unknown[]
+      const ackDeadline = job[8] as bigint
+      if (block.timestamp <= ackDeadline) {
+        const waitSec = Number(ackDeadline - block.timestamp) + FAILURE_GRACE_SECONDS
+        log.warn({routing, blockTs: block.timestamp, ackDeadline, waitSec}, 'cancel too early per chain time — rescheduling')
+        const t = setTimeout(() => {
+          onAckTimeout(routing).catch(e => log.error({err: e, routing}, 'rescheduled onAckTimeout threw'))
+        }, waitSec * 1000)
+        slot.cancelTimer = t
+        return
+      }
+    } catch (err) {
+      // Chain read failed — fall through to the original cancel attempt; the
+      // try/catch below still handles a revert without crashing.
+      log.warn({err, routing}, 'pre-cancel chain time check failed; attempting cancelJob anyway')
+    }
     try {
       const tx = await cancelJob(chain, slot.onChainJobId)
       log.warn({tx, routing, onChainJobId: slot.onChainJobId}, 'no ACK within window — cancelled on-chain')

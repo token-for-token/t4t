@@ -18,6 +18,41 @@ function isBatchOverissued(err: unknown): boolean {
   return /overissued|insufficient/i.test(msg) || e.responseBody?.code === 402
 }
 
+/** Detect HTTP 429 from Bee. bee-js surfaces this as either an axios-style
+ *  message ("Request failed with status code 429") or as `{status: 429}` on
+ *  its error object — match both. */
+function isRateLimited(err: unknown): boolean {
+  const e = err as {status?: number; message?: string} | null
+  if (!e) return false
+  if (e.status === 429) return true
+  return typeof e.message === 'string' && /status code 429|\b429\b/.test(e.message)
+}
+
+/** Retry a Bee call that 429-ed with exponential backoff. PSS in particular
+ *  can be rate-limited when the gateway and provider share a Bee node — a
+ *  small retry loop turns a transient throttle into a slightly slower request
+ *  instead of a user-visible failure. Non-429 errors propagate immediately. */
+async function withRateLimitRetry<T>(
+  logger: Logger,
+  label: string,
+  fn: () => Promise<T>,
+  delaysMs: readonly number[] = [1000, 3000, 9000],
+): Promise<T> {
+  let lastErr: unknown
+  for (let i = 0; i <= delaysMs.length; i++) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastErr = err
+      if (!isRateLimited(err) || i === delaysMs.length) throw err
+      const delay = delaysMs[i]!
+      logger.warn({label, attempt: i + 1, delay}, 'bee 429 — backing off and retrying')
+      await new Promise(r => setTimeout(r, delay))
+    }
+  }
+  throw lastErr
+}
+
 /** Emergency self-heal: when a Bee call fails because the batch is full,
  *  dilute it by +1 depth (doubles bucket capacity, halves remaining TTL) and
  *  retry the call exactly once. Logged so the operator sees the recovery.
@@ -143,13 +178,15 @@ export class PssTransport {
       throw new Error(`recipient PSS pubkey must be 32-byte X coord (got ${x.length / 2} bytes)`)
     }
     const pubKey = '02' + x
-    await withBatchRecovery(this.opts, () =>
-      this.opts.bee.pssSend(
-        this.opts.postageBatchId,
-        topic,
-        target,
-        encodeEnvelope(args.envelope),
-        pubKey,
+    await withRateLimitRetry(this.opts.logger, 'pssSend', () =>
+      withBatchRecovery(this.opts, () =>
+        this.opts.bee.pssSend(
+          this.opts.postageBatchId,
+          topic,
+          target,
+          encodeEnvelope(args.envelope),
+          pubKey,
+        ),
       ),
     )
   }

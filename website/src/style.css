@@ -366,6 +366,18 @@ table.models tr.model-head td {
   border-top: var(--hair) solid var(--line-strong);
 }
 table.models tr.model-head td:first-child { color: var(--xbzz); }
+table.models tr.model-head[data-toggle] { cursor: pointer; user-select: none; }
+table.models tr.model-head[data-toggle]:hover td { background: rgba(255,92,0,0.08); }
+table.models tr.model-head .caret {
+  display: inline-block;
+  width: 1ch;
+  color: var(--ink-faint);
+  transition: transform 120ms ease;
+}
+table.models tr.model-head[aria-expanded="true"] .caret {
+  transform: rotate(90deg);
+  color: var(--xbzz);
+}
 table.models tr.provider-row td {
   color: var(--ink-dim);
   font-size: 12px;
@@ -396,6 +408,11 @@ table.models tr.provider-row td:first-child {
   background: currentColor;
 }
 .pill.providers { color: var(--xbzz); border-color: var(--xbzz); }
+
+.price-bzz { color: var(--ink); }
+.price-sep { color: var(--ink-faint); }
+.price-usd { color: var(--ink-dim); }
+table.models tr.provider-row .price-bzz { color: var(--ink); }
 
 button {
   font-family: var(--font-display);

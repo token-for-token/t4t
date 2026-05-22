@@ -12,6 +12,8 @@ const $models = document.getElementById('models')
 const $status = document.getElementById('status')
 const $refresh = document.getElementById('refresh')
 
+let bzzUsd = null
+
 $refresh.addEventListener('click', () => load())
 load()
 
@@ -24,7 +26,9 @@ async function load() {
       $models.innerHTML = ''
       return
     }
-    const providers = await fetchAllProviders()
+    // Fire price lookup in parallel with the chain reads; missing price just hides the USD column.
+    const [providers, usd] = await Promise.all([fetchAllProviders(), fetchBzzUsd()])
+    bzzUsd = usd
     const live = providers.filter(p => isLive(p))
     if (live.length === 0) {
       $models.innerHTML = ''
@@ -47,6 +51,20 @@ async function load() {
     setStatus(`Failed to load: ${err.message ?? err}`, 'err')
   } finally {
     $refresh.disabled = false
+  }
+}
+
+async function fetchBzzUsd() {
+  try {
+    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=swarm-bzz&vs_currencies=usd', {
+      headers: {accept: 'application/json'},
+    })
+    if (!r.ok) return null
+    const data = await r.json()
+    const usd = data?.['swarm-bzz']?.usd
+    return typeof usd === 'number' && isFinite(usd) && usd > 0 ? usd : null
+  } catch {
+    return null
   }
 }
 
@@ -113,8 +131,8 @@ function renderModels(byModel) {
   rows.push(`<thead><tr>
     <th>Model / provider</th>
     <th>Providers</th>
-    <th>Input / 1M</th>
-    <th>Output / 1M</th>
+    <th>1M Input Token</th>
+    <th>1M Output Token</th>
     <th>SLA</th>
     <th>Stake</th>
     <th>Success</th>
@@ -122,11 +140,12 @@ function renderModels(byModel) {
   rows.push('<tbody>')
   for (const slot of sorted) {
     const cheapest = slot.rows[0].offering
-    rows.push(`<tr class="model-head">
-      <td class="mono">${escape(slot.modelId)}</td>
+    const modelKey = `m-${slot.modelId.replace(/[^a-zA-Z0-9_-]/g, '_')}`
+    rows.push(`<tr class="model-head" data-toggle="${escape(modelKey)}" aria-expanded="false">
+      <td class="mono"><span class="caret">&rsaquo;</span> ${escape(slot.modelId)}</td>
       <td><span class="pill providers">${slot.rows.length}</span></td>
-      <td>${formatXBZZ(cheapest.inputPricePerMillionTokens)}</td>
-      <td>${formatXBZZ(cheapest.outputPricePerMillionTokens)}</td>
+      <td>${formatPrice(cheapest.inputPricePerMillionTokens)}</td>
+      <td>${formatPrice(cheapest.outputPricePerMillionTokens)}</td>
       <td>${escape(Number(cheapest.maxLatencySeconds))}s</td>
       <td class="muted">cheapest &darr;</td>
       <td></td>
@@ -136,29 +155,61 @@ function renderModels(byModel) {
         provider.totalJobs === 0
           ? '—'
           : `${Math.round((Number(provider.successfulJobs) * 100) / Number(provider.totalJobs))}% (${provider.successfulJobs}/${provider.totalJobs})`
-      rows.push(`<tr class="provider-row">
+      rows.push(`<tr class="provider-row" data-group="${escape(modelKey)}" hidden>
         <td class="mono">${shortAddr(provider.owner)}</td>
         <td></td>
-        <td>${formatXBZZ(offering.inputPricePerMillionTokens)}</td>
-        <td>${formatXBZZ(offering.outputPricePerMillionTokens)}</td>
+        <td>${formatPrice(offering.inputPricePerMillionTokens)}</td>
+        <td>${formatPrice(offering.outputPricePerMillionTokens)}</td>
         <td>${escape(Number(offering.maxLatencySeconds))}s</td>
-        <td>${formatXBZZ(provider.stake)}</td>
+        <td>${formatXBZZ(provider.stake)} BZZ</td>
         <td>${escape(successRate)}</td>
       </tr>`)
     }
   }
   rows.push('</tbody>')
   $models.innerHTML = `<table class="models">${rows.join('')}</table>`
+  wireToggles()
 }
 
-function formatXBZZ(weiBig) {
-  const wei = typeof weiBig === 'bigint' ? weiBig : BigInt(weiBig)
-  const whole = wei / 10n ** 18n
-  const frac = wei % 10n ** 18n
+function wireToggles() {
+  for (const head of $models.querySelectorAll('tr.model-head[data-toggle]')) {
+    head.addEventListener('click', () => {
+      const key = head.getAttribute('data-toggle')
+      const expanded = head.getAttribute('aria-expanded') === 'true'
+      head.setAttribute('aria-expanded', expanded ? 'false' : 'true')
+      for (const row of $models.querySelectorAll(`tr.provider-row[data-group="${CSS.escape(key)}"]`)) {
+        row.hidden = expanded
+      }
+    })
+  }
+}
+
+// xBZZ on Gnosis has 16 decimals (1 BZZ = 10^16 PLUR), NOT 18.
+const BZZ_SCALE = 10n ** 16n
+
+function formatXBZZ(plurBig) {
+  const plur = typeof plurBig === 'bigint' ? plurBig : BigInt(plurBig)
+  const whole = plur / BZZ_SCALE
+  const frac = plur % BZZ_SCALE
   if (frac === 0n) return `${whole}`
-  const fracStr = frac.toString().padStart(18, '0').replace(/0+$/, '')
-  const trimmed = fracStr.slice(0, 6)
-  return `${whole}.${trimmed}`
+  const fracStr = frac.toString().padStart(16, '0').replace(/0+$/, '')
+  return `${whole}.${fracStr.slice(0, 6)}`
+}
+
+function formatPrice(plurBig) {
+  const plur = typeof plurBig === 'bigint' ? plurBig : BigInt(plurBig)
+  const bzz = `${formatXBZZ(plur)} BZZ`
+  if (bzzUsd == null) return `<span class="price-bzz">${escape(bzz)}</span>`
+  // Down at human magnitudes Number precision is fine.
+  const usdNum = (Number(plur) / 1e16) * bzzUsd
+  return `<span class="price-bzz">${escape(bzz)}</span><span class="price-sep"> | </span><span class="price-usd">${escape(formatUsd(usdNum))}</span>`
+}
+
+function formatUsd(n) {
+  if (!isFinite(n)) return '— USD'
+  if (n >= 1) return `${n.toFixed(4)} USD`
+  if (n >= 0.0001) return `${n.toFixed(6)} USD`
+  return `${n.toExponential(2)} USD`
 }
 
 function shortAddr(a) {
