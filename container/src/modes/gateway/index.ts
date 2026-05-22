@@ -250,6 +250,16 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     }, 3600_000)
   }
 
+  // JobStatus enum order from JobEscrow.sol — keep in sync.
+  const JOB_STATUS = ['none', 'pending', 'acked', 'delivered', 'claimed', 'cancelled', 'timed_out'] as const
+  type DbJobStatus = 'cancelled' | 'timed_out'
+  // True when the gateway should treat the DB row as terminal and stop sweeping.
+  function dbStatusFromOnChain(onChain: number): DbJobStatus | null {
+    if (onChain === 5) return 'cancelled'
+    if (onChain === 6) return 'timed_out'
+    return null
+  }
+
   // Stale-job sweeper — safety net for the in-process per-job failure timer.
   // The fast path fires ~60s after postJob if PSS never delivers, but those
   // timers don't survive a container restart, so any job in flight at restart
@@ -278,7 +288,38 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
         })
         log.info({onChainJobId: r.onChainJobId, tx, ageSec: Math.floor(Date.now() / 1000) - r.postedAt}, 'stale job auto-cancelled')
       } catch (err) {
-        log.warn({err, onChainJobId: r.onChainJobId}, 'auto-cancel reverted; will retry next sweep')
+        // The most common revert here is BadStatus() — the job is no longer
+        // Pending on-chain because it was settled out-of-band (a stray manual
+        // cancel, a late claim, a prior cancel that we didn't update the DB
+        // for). Read the on-chain status; if it's terminal, heal the DB row
+        // so the sweeper stops retrying every minute.
+        try {
+          const job = await chain.pub.readContract({
+            address: cfg.ESCROW_ADDRESS,
+            abi: jobEscrowAbi,
+            functionName: 'jobs',
+            args: [r.onChainJobId as Hex],
+          }) as readonly unknown[]
+          const onChainStatus = Number(job[10])
+          const dbStatus = dbStatusFromOnChain(onChainStatus)
+          if (dbStatus) {
+            db.applyGatewayStatusByOnChain({
+              onChainJobId: r.onChainJobId!,
+              status: dbStatus,
+              errorMessage: `auto-cancel reverted; on-chain status ${JOB_STATUS[onChainStatus] ?? onChainStatus} — DB healed`,
+            })
+            log.info({onChainJobId: r.onChainJobId, dbStatus}, 'DB row healed from on-chain terminal state')
+            continue
+          }
+          // Non-terminal (None/Pending/Acked/Delivered/Claimed) — leave the
+          // row alone. Pending shouldn't normally reach BadStatus, so log it.
+          log.warn(
+            {err, onChainJobId: r.onChainJobId, onChainStatus: JOB_STATUS[onChainStatus] ?? onChainStatus},
+            'auto-cancel reverted; on-chain status is non-terminal — will retry next sweep',
+          )
+        } catch (readErr) {
+          log.warn({err: readErr, onChainJobId: r.onChainJobId}, 'auto-cancel reverted and on-chain read failed; will retry next sweep')
+        }
       }
     }
   }
