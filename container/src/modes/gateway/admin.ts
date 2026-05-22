@@ -2,7 +2,7 @@ import express from 'express'
 import {parseUnits, type Address} from 'viem'
 import type {Bee} from '@ethersphere/bee-js'
 import type {ChainClient} from '../../lib/chain'
-import {cancelJob, sendXbzz, sendXdai} from '../../lib/chain'
+import {sendXbzz, sendXdai} from '../../lib/chain'
 import type {GatewayJobRow, JobsDb} from '../../lib/jobs-db'
 import type {Logger} from '../../lib/logger'
 import type {ModelDiscovery} from './models'
@@ -88,32 +88,6 @@ export function startAdminServer(deps: GatewayAdminDeps): void {
   })
 
   app.get('/jobs/rows', (_req, res) => {
-    const rows = deps.db.listGatewayJobs({limit: 200})
-    res.send(jobsTableBody(rows, deps.payloadsPersisted))
-  })
-
-  // Manual cancel for stuck jobs. The contract requires `block.timestamp >
-  // ackDeadline` AND `status == Pending`, so the button only renders for rows
-  // matching those preconditions — but the chain is the source of truth, so a
-  // revert here is still possible (provider ack-raced us between the page render
-  // and the click). We surface the revert message back into the row via HTMX.
-  app.post('/jobs/:onChainJobId/cancel', async (req, res) => {
-    const onChainJobId = req.params.onChainJobId as `0x${string}`
-    if (!/^0x[0-9a-fA-F]{64}$/.test(onChainJobId)) {
-      res.status(400).send(`<tr><td colspan="11" class="err">invalid jobId</td></tr>`)
-      return
-    }
-    try {
-      const tx = await cancelJob(deps.chain, onChainJobId)
-      deps.logger.info({onChainJobId, tx}, 'manual cancel submitted')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      deps.logger.warn({err, onChainJobId}, 'manual cancel failed')
-      res.status(500).send(
-        `<tr><td colspan="11" class="err">cancel failed: ${escape(extractRevertReason(msg))}</td></tr>`,
-      )
-      return
-    }
     const rows = deps.db.listGatewayJobs({limit: 200})
     res.send(jobsTableBody(rows, deps.payloadsPersisted))
   })
@@ -251,7 +225,7 @@ function jobsPage(rows: GatewayJobRow[], spent: bigint, pending: number, payload
     <thead><tr>
       <th>Job</th><th>Provider</th><th>Model</th><th>Status</th>
       <th>Posted</th><th>Max xBZZ <span class="muted">(escrow)</span></th><th>Paid xBZZ <span class="muted">(actual)</span></th><th>AI Token (input/output)</th>
-      <th>Prompt</th><th>Error</th><th></th>
+      <th>Prompt</th><th>Error</th>
     </tr></thead>
     <tbody hx-get="/jobs/rows" hx-trigger="every 3s" hx-target="this" hx-swap="innerHTML">
       ${jobsTableBody(rows, payloads)}
@@ -267,25 +241,10 @@ function jobsPage(rows: GatewayJobRow[], spent: bigint, pending: number, payload
 }
 
 function jobsTableBody(rows: GatewayJobRow[], payloads: boolean): string {
-  if (rows.length === 0) return `<tr><td colspan="11" class="muted">No jobs yet.</td></tr>`
-  return rows.map(r => jobRow(r, payloads)).join('')
-}
-
-function jobRow(r: GatewayJobRow, payloads: boolean): string {
-  // Cancel is only meaningful for jobs that are still on-chain Pending — i.e.
-  // the gateway lost track of them (restart killed the in-process timer) or
-  // PSS never delivered. 'posted' status means postJob succeeded and we
-  // haven't seen a successful delivery/claim yet.
-  const cancellable = r.status === 'posted' && !!r.onChainJobId
-  const cancelCell = cancellable
-    ? `<button
-         hx-post="/jobs/${escape(r.onChainJobId!)}/cancel"
-         hx-target="closest tr"
-         hx-swap="outerHTML"
-         hx-confirm="Cancel this job? Refunds the escrow to this wallet and slashes 2× maxPayment from the provider's stake."
-       >Cancel</button>`
-    : ''
-  return `<tr>
+  if (rows.length === 0) return `<tr><td colspan="10" class="muted">No jobs yet.</td></tr>`
+  return rows
+    .map(
+      r => `<tr>
       <td class="mono">${escape(shortHex(r.jobId))}</td>
       <td class="mono">${escape(shortHex(r.provider))}</td>
       <td>${escape(r.modelId)}</td>
@@ -296,17 +255,9 @@ function jobRow(r: GatewayJobRow, payloads: boolean): string {
       <td>${escape(r.promptTokens ?? '—')} / ${escape(r.completionTokens ?? '—')}</td>
       <td>${escape((payloads && r.prompt ? r.prompt.slice(0, 80) : r.prompt) ?? '')}</td>
       <td class="err">${escape(r.errorMessage ?? '')}</td>
-      <td>${cancelCell}</td>
-    </tr>`
-}
-
-/** Pull the short revert reason out of a viem error string. The full message
- *  is multi-paragraph and includes the request body; the operator only needs
- *  the bit after "execution reverted:" (or the message itself if not viem). */
-function extractRevertReason(msg: string): string {
-  const m = msg.match(/(?:execution reverted: ?(.+?)(?:\n|$))|(?:reverted with the following reason: ?(.+?)(?:\n|$))/i)
-  const reason = (m && (m[1] ?? m[2]))?.trim()
-  return reason && reason !== 'revert' ? reason : msg.split('\n')[0]!.slice(0, 200)
+    </tr>`,
+    )
+    .join('')
 }
 
 function statusPage(status: Record<string, unknown>, refreshSec: number): string {

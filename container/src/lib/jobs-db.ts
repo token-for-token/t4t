@@ -257,6 +257,21 @@ export class JobsDb {
     return r.changes
   }
 
+  /** Mark a gateway row as cancelled/timed-out from the on-chain side. Lets
+   *  the admin UI's Cancel button update the row's pill (and hide the button
+   *  on the next refresh) without waiting for an event watcher. */
+  applyGatewayStatusByOnChain(args: {onChainJobId: string; status: 'cancelled' | 'timed_out'; errorMessage?: string}): number {
+    const r = this.db
+      .prepare(
+        `UPDATE gateway_jobs
+            SET status       = @status,
+                errorMessage = COALESCE(@errorMessage, errorMessage)
+          WHERE onChainJobId = @onChainJobId`,
+      )
+      .run({...args, errorMessage: args.errorMessage ?? null})
+    return r.changes
+  }
+
   listGatewayJobs(opts: {sinceSeconds?: number; limit?: number} = {}): GatewayJobRow[] {
     const since = opts.sinceSeconds ?? Math.floor(Date.now() / 1000) - 7 * 86400
     const limit = opts.limit ?? 500

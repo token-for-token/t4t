@@ -250,6 +250,44 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     }, 3600_000)
   }
 
+  // Stale-job sweeper — safety net for the in-process per-job failure timer.
+  // The fast path fires ~60s after postJob if PSS never delivers, but those
+  // timers don't survive a container restart, so any job in flight at restart
+  // gets orphaned in `posted` status forever and bloats the provider's
+  // openJobs counter (which eventually trips InsufficientStakeForJob on new
+  // postJob calls). This sweeper picks up the slack: every minute it scans
+  // the gateway DB for rows still in `posted` after STALE_POSTED_SECONDS and
+  // cancels them on-chain. A revert just leaves the row alone for the next
+  // tick — usually means the provider mid-flight acked or the row already
+  // resolved out-of-band.
+  const STALE_POSTED_SECONDS = 10 * 60
+  async function sweepStalePostedJobs(): Promise<void> {
+    const cutoff = Math.floor(Date.now() / 1000) - STALE_POSTED_SECONDS
+    const rows = db.listGatewayJobs({limit: 200}).filter(
+      r => r.status === 'posted' && r.onChainJobId && r.postedAt < cutoff,
+    )
+    if (rows.length === 0) return
+    log.info({count: rows.length, cutoffSeconds: STALE_POSTED_SECONDS}, 'sweeping stale posted jobs')
+    for (const r of rows) {
+      try {
+        const tx = await cancelJob(chain, r.onChainJobId as Hex)
+        db.applyGatewayStatusByOnChain({
+          onChainJobId: r.onChainJobId!,
+          status: 'cancelled',
+          errorMessage: `auto-cancelled after ${STALE_POSTED_SECONDS}s in posted`,
+        })
+        log.info({onChainJobId: r.onChainJobId, tx, ageSec: Math.floor(Date.now() / 1000) - r.postedAt}, 'stale job auto-cancelled')
+      } catch (err) {
+        log.warn({err, onChainJobId: r.onChainJobId}, 'auto-cancel reverted; will retry next sweep')
+      }
+    }
+  }
+  // Fire once on startup to clear restart-orphans, then on a 60s tick.
+  sweepStalePostedJobs().catch(err => log.warn({err}, 'initial stale-job sweep failed'))
+  setInterval(() => {
+    sweepStalePostedJobs().catch(err => log.warn({err}, 'stale-job sweep crashed'))
+  }, 60_000)
+
   // Pending jobs awaiting delivery; resolved on `job_deliver`.
   //
   // `onProgress` is the SSE progress sink wired up by the HTTP layer. Holding
