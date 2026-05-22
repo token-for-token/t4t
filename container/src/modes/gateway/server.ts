@@ -74,9 +74,19 @@ export function attachClientApi(app: Express, deps: GatewayApiDeps): void {
  *       posting on-chain, waiting for PSS delivery) instead of staring at a
  *       blank assistant bubble.
  *
- *  Progress events are rendered as markdown blockquote lines so they're
- *  visible in any chat UI without special handling, then the actual model
- *  output streams after a separator.
+ *  Progress events are emitted inside a `<details type="status">` block at
+ *  the head of the assistant turn. Open WebUI (and any Markdown-aware client)
+ *  renders that block as a collapsed "status pill" visually separate from
+ *  the assistant answer, so the user perceives two messages — a system-style
+ *  status update streaming while the network does its work, then the AI
+ *  answer once delivery completes. After the block closes, the actual model
+ *  output streams as normal content.
+ *
+ *  We can't emit a literal mid-stream `role: 'system'` chunk because the
+ *  OpenAI streaming protocol is single-message-per-request — clients latch
+ *  the role from the first chunk and concatenate everything else into one
+ *  bubble. The `<details type="status">` convention is the established way
+ *  to get the two-message visual UX inside that constraint.
  */
 async function streamChat(
   res: Response,
@@ -97,7 +107,7 @@ async function streamChat(
   const created = Math.floor(Date.now() / 1000)
   const model = body.model
 
-  const writeChunk = (delta: {role?: 'assistant' | 'system'; content?: string}, finish: string | null = null): void => {
+  const writeChunk = (delta: {role?: 'assistant'; content?: string}, finish: string | null = null): void => {
     res.write(
       `data: ${JSON.stringify({
         id,
@@ -120,15 +130,25 @@ async function streamChat(
   // seen a delta carrying the role.
   writeChunk({role: 'assistant'})
 
+  // Open the status block. `done="false"` tells Open WebUI to keep the pill
+  // spinning until either the closing tag arrives or `done="true"` is set.
+  // The summary is what the user sees on the collapsed pill.
+  let statusOpen = true
+  writeChunk({content: `<details type="status" done="false">\n<summary>t4t network</summary>\n\n`})
+
+  const closeStatus = (): void => {
+    if (!statusOpen) return
+    statusOpen = false
+    writeChunk({content: `\n</details>\n\n`})
+  }
+
   try {
     const completion = await deps.handleChat({...body, stream: false}, e => {
       const line = renderProgress(e)
       if (line) writeChunk({content: line})
     })
 
-    // Separator between the progress preamble and the actual answer. Empty
-    // string is harmless for clients that strip whitespace.
-    writeChunk({content: '\n'})
+    closeStatus()
 
     const fullContent = completion.choices[0]?.message.content ?? ''
     for (const part of chunkText(fullContent, 32)) {
@@ -141,8 +161,10 @@ async function streamChat(
     deps.logger.error({err}, 'chat completion failed (stream)')
     // Surface the failure to the user inside the assistant turn rather than
     // dropping the socket — the latter looks like a network error to the
-    // client, this is at least diagnostic.
-    writeChunk({content: `\n> _error: ${escapeMarkdown(String(err))}_\n`})
+    // client, this is at least diagnostic. We close the status block first
+    // so the error renders as the assistant answer, not as a status line.
+    writeChunk({content: `- error: ${escapeMarkdown(String(err))}\n`})
+    closeStatus()
     writeChunk({}, 'stop')
     res.write('data: [DONE]\n\n')
   } finally {
@@ -151,31 +173,30 @@ async function streamChat(
   }
 }
 
-/** Format a lifecycle event as a single markdown blockquote line. Returning
- *  null suppresses an event from the wire (e.g. if a future event is too
- *  noisy to render to end users). */
+/** Format a lifecycle event as a single bullet line inside the `<details
+ *  type="status">` block. Returning null suppresses an event from the wire. */
 function renderProgress(e: ProgressEvent): string | null {
   switch (e.kind) {
     case 'selecting_provider':
-      return `> _t4t: selecting provider for \`${escapeMarkdown(e.modelId)}\`…_\n`
+      return `- selecting provider for \`${escapeMarkdown(e.modelId)}\`…\n`
     case 'provider_selected':
-      return `> _t4t: provider \`${shortHex(e.provider)}\` selected_\n`
+      return `- provider \`${shortHex(e.provider)}\` selected\n`
     case 'posting_job':
-      return `> _t4t: posting job on-chain (max \`${e.maxPayment}\` xBZZ wei)…_\n`
+      return `- posting job on-chain (max \`${e.maxPayment}\` xBZZ wei)…\n`
     case 'job_posted':
-      return `> _t4t: job posted (tx \`${shortHex(e.txHash)}\`)_\n`
+      return `- job posted (tx \`${shortHex(e.txHash)}\`)\n`
     case 'notifying_provider':
-      return `> _t4t: notifying provider via Swarm PSS…_\n`
+      return `- notifying provider via Swarm PSS…\n`
     case 'provider_acked':
-      return `> _t4t: provider acked (ETA ${e.estimatedCompletion}s)_\n`
+      return `- provider acked (ETA ${e.estimatedCompletion}s)\n`
     case 'awaiting_delivery':
-      return `> _t4t: awaiting response delivery from Swarm…_\n`
+      return `- awaiting response delivery from Swarm…\n`
     case 'delivered': {
       const tokens =
         e.promptTokens !== null && e.completionTokens !== null
           ? ` (${e.promptTokens}/${e.completionTokens} tokens)`
           : ''
-      return `> _t4t: response delivered${tokens}_\n`
+      return `- response delivered${tokens}\n`
     }
   }
 }

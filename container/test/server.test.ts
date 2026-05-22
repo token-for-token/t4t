@@ -82,7 +82,7 @@ describe('attachClientApi /v1/chat/completions streaming', () => {
     harness = null
   })
 
-  it('emits progress events as SSE chunks before the response body', async () => {
+  it('emits progress events inside a <details type="status"> block before the response body', async () => {
     const events: ProgressEvent[] = [
       {kind: 'selecting_provider', modelId: 'llama3:8b'},
       {kind: 'provider_selected', provider: '0xabcdef1234567890abcdef1234567890abcdef12', modelId: 'llama3:8b'},
@@ -113,27 +113,38 @@ describe('attachClientApi /v1/chat/completions streaming', () => {
     expect(sse.trimEnd().endsWith('data: [DONE]')).toBe(true)
 
     const chunks = parseChunks(sse)
-    expect(chunks.length).toBeGreaterThan(events.length)
 
     // First chunk: assistant role primer (so clients render the bubble).
     expect((chunks[0]!.choices as Array<Record<string, unknown>>)[0]!.delta).toEqual({role: 'assistant'})
 
-    const contents = chunks
-      .map(c => (c.choices as Array<{delta: {content?: string}}>)[0]!.delta.content)
-      .filter((s): s is string => typeof s === 'string')
+    const fullText = chunks
+      .map(c => (c.choices as Array<{delta: {content?: string}}>)[0]!.delta.content ?? '')
+      .join('')
 
-    // Every progress event surfaces as a visible blockquote line.
-    expect(contents.some(c => c.includes('selecting provider'))).toBe(true)
-    expect(contents.some(c => c.includes('provider `0xabcd…ef12` selected'))).toBe(true)
-    expect(contents.some(c => c.includes('posting job on-chain'))).toBe(true)
-    expect(contents.some(c => c.includes('job posted'))).toBe(true)
-    expect(contents.some(c => c.includes('notifying provider'))).toBe(true)
-    expect(contents.some(c => c.includes('provider acked (ETA 12s)'))).toBe(true)
-    expect(contents.some(c => c.includes('awaiting response delivery'))).toBe(true)
-    expect(contents.some(c => c.includes('response delivered (3/4 tokens)'))).toBe(true)
+    // Status block opens with the Open WebUI status type attribute.
+    expect(fullText).toContain('<details type="status" done="false">')
+    expect(fullText).toContain('<summary>t4t network</summary>')
+    expect(fullText).toContain('</details>')
 
-    // Actual answer survives chunking.
-    expect(contents.join('')).toContain('hello world')
+    // Progress lines live inside the status block; the assistant answer
+    // lives outside it. Split on the closing tag and check both halves.
+    const [statusBody, answerBody] = fullText.split('</details>')
+    expect(statusBody).toBeDefined()
+    expect(answerBody).toBeDefined()
+
+    expect(statusBody).toContain('- selecting provider for `llama3:8b`')
+    expect(statusBody).toContain('- provider `0xabcd…ef12` selected')
+    expect(statusBody).toContain('- posting job on-chain')
+    expect(statusBody).toContain('- job posted')
+    expect(statusBody).toContain('- notifying provider via Swarm PSS')
+    expect(statusBody).toContain('- provider acked (ETA 12s)')
+    expect(statusBody).toContain('- awaiting response delivery')
+    expect(statusBody).toContain('- response delivered (3/4 tokens)')
+
+    // The model answer is outside the status block — Open WebUI renders this
+    // as the assistant message proper, with the status block as a pill above.
+    expect(answerBody).toContain('hello world')
+    expect(statusBody).not.toContain('hello world')
 
     // Final chunk carries finish_reason.
     const last = chunks[chunks.length - 1]!
@@ -176,7 +187,10 @@ describe('attachClientApi /v1/chat/completions streaming', () => {
       .map(c => (c.choices as Array<{delta: {content?: string}}>)[0]!.delta.content)
       .filter((s): s is string => typeof s === 'string')
       .join('')
-    expect(contents).toContain('no provider matches model=ghost')
+    // Error is rendered as a bullet inside the status block, then the
+    // block closes so nothing is left half-open in the rendered markdown.
+    expect(contents).toContain('- error: Error: no provider matches model=ghost')
+    expect(contents).toContain('</details>')
   })
 
   it('non-streaming requests still return a single JSON body', async () => {
