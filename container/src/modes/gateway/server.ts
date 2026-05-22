@@ -150,10 +150,12 @@ async function streamChat(
 
     closeStatus()
 
+    // The response arrived from Swarm as one complete blob — there's nothing
+    // to actually stream. Emit it as a single content chunk so the assistant
+    // bubble pops in atomically the moment delivery lands, instead of
+    // pretending to stream with cosmetic 32-char slices.
     const fullContent = completion.choices[0]?.message.content ?? ''
-    for (const part of chunkText(fullContent, 32)) {
-      writeChunk({content: part})
-    }
+    if (fullContent) writeChunk({content: fullContent})
 
     writeChunk({}, completion.choices[0]?.finish_reason ?? 'stop')
     res.write('data: [DONE]\n\n')
@@ -210,10 +212,4 @@ function shortHex(s: string): string {
  *  can't break out of the italic/code spans we wrap them in. */
 function escapeMarkdown(s: string): string {
   return s.replace(/[`_*]/g, '\\$&').replace(/\n/g, ' ')
-}
-
-function chunkText(s: string, size: number): string[] {
-  const out: string[] = []
-  for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size))
-  return out
 }

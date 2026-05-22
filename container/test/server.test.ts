@@ -146,6 +146,17 @@ describe('attachClientApi /v1/chat/completions streaming', () => {
     expect(answerBody).toContain('hello world')
     expect(statusBody).not.toContain('hello world')
 
+    // The response arrives from Swarm as one blob; no cosmetic chunking.
+    // Exactly one content chunk should carry the answer string.
+    const answerChunks = chunks.filter(c => {
+      const content = (c.choices as Array<{delta: {content?: string}}>)[0]!.delta.content
+      return typeof content === 'string' && content.includes('hello world')
+    })
+    expect(answerChunks).toHaveLength(1)
+    expect(
+      (answerChunks[0]!.choices as Array<{delta: {content?: string}}>)[0]!.delta.content,
+    ).toBe('hello world')
+
     // Final chunk carries finish_reason.
     const last = chunks[chunks.length - 1]!
     expect((last.choices as Array<{finish_reason: string}>)[0]!.finish_reason).toBe('stop')
