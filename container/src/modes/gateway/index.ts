@@ -26,6 +26,7 @@ import type {
   JobNotifyBody,
   OpenAIChatRequest,
   OpenAIChatResponse,
+  ProgressEvent,
   RequestPayload,
   ResponsePayload,
 } from '../../lib/types'
@@ -250,7 +251,19 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
   }
 
   // Pending jobs awaiting delivery; resolved on `job_deliver`.
-  const pending = new Map<Hex, {resolve: (r: OpenAIChatResponse) => void; reject: (e: unknown) => void}>()
+  //
+  // `onProgress` is the SSE progress sink wired up by the HTTP layer. Holding
+  // it here (rather than on a side-channel keyed by jobId) lets the PSS
+  // subscriber, which is where job_ack/job_deliver land, emit lifecycle events
+  // without having to know which HTTP response a given job belongs to.
+  const pending = new Map<
+    Hex,
+    {
+      resolve: (r: OpenAIChatResponse) => void
+      reject: (e: unknown) => void
+      onProgress?: (e: ProgressEvent) => void
+    }
+  >()
 
   // Per-job failure timers — schedule on-chain cancel/timeout when the provider
   // fails liveness (spec §3). Both timers use a small grace beyond the on-chain
@@ -349,6 +362,11 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
       if (env.type === 'job_ack') {
         const body = env.body as JobAckBody
         log.info({jobId: body.jobId, eta: body.estimatedCompletion}, 'ack received')
+        pending.get(body.jobId)?.onProgress?.({
+          kind: 'provider_acked',
+          estimatedCompletion: body.estimatedCompletion,
+        })
+        pending.get(body.jobId)?.onProgress?.({kind: 'awaiting_delivery'})
         const slot = failureTimers.get(body.jobId)
         if (slot) {
           if (slot.cancelTimer) {
@@ -417,6 +435,11 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
               errorMessage: null,
             })
           }
+          slot.onProgress?.({
+            kind: 'delivered',
+            promptTokens: payload.openaiResponse.usage?.prompt_tokens ?? null,
+            completionTokens: payload.openaiResponse.usage?.completion_tokens ?? null,
+          })
           slot.resolve(payload.openaiResponse)
         } catch (err) {
           slot.reject(err)
@@ -429,13 +452,18 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     },
   })
 
-  async function handleChat(req: OpenAIChatRequest): Promise<OpenAIChatResponse> {
+  async function handleChat(
+    req: OpenAIChatRequest,
+    onProgress?: (e: ProgressEvent) => void,
+  ): Promise<OpenAIChatResponse> {
+    onProgress?.({kind: 'selecting_provider', modelId: req.model})
     const target = await selectProvider(chain, cfg.T4T_SELECTION_STRATEGY, {
       modelId: req.model,
       maxPrice: cfg.T4T_MAX_PRICE_PER_MILLION_TOKENS,
       manualProvider: cfg.T4T_MANUAL_PROVIDER,
     })
     if (!target) throw new Error(`no provider matches model=${req.model}`)
+    onProgress?.({kind: 'provider_selected', provider: target.provider.owner, modelId: req.model})
 
     // Conservative ceiling: assume prompt tokens ≈ max_tokens (most prompts are
     // shorter, this overshoots safely) and budget at the full split rate, plus
@@ -466,6 +494,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     )
 
     const deliveryDeadline = Math.floor(Date.now() / 1000) + cfg.T4T_DEFAULT_DEADLINE_SECONDS
+    onProgress?.({kind: 'posting_job', provider: target.provider.owner, maxPayment: maxPayment.toString()})
     const {txHash, jobId: onChainJobId} = await postJob(chain, {
       provider: target.provider.owner,
       requestHash: ('0x' + requestHash) as Hex,
@@ -474,6 +503,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
       deliveryDeadline,
     })
     log.info({txHash, onChainJobId, provider: target.provider.owner}, 'job posted on-chain')
+    onProgress?.({kind: 'job_posted', txHash, onChainJobId})
 
     // The PSS notify carries `requestHash`-derived id; the provider matches
     // it to the chain via its JobPostedIndex. We keep the on-chain id alongside
@@ -502,7 +532,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     jobMeta.set(jobIdRouting, {provider: target.provider.owner, modelId: req.model})
 
     const settled = new Promise<OpenAIChatResponse>((resolve, reject) => {
-      pending.set(jobIdRouting, {resolve, reject})
+      pending.set(jobIdRouting, {resolve, reject, onProgress})
     })
 
     const cancelTimer = setTimeout(() => {
@@ -514,6 +544,7 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
 
     // Out-of-band notify so providers can start work before they observe the
     // chain event. The on-chain `JobPosted` is the source of truth for payment.
+    onProgress?.({kind: 'notifying_provider', provider: target.provider.owner})
     const env = await signEnvelope<JobNotifyBody>(
       {
         from: chain.address,

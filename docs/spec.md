@@ -366,7 +366,11 @@ Exposes:
 - `GET  /v1/models` — lists models available across discovered providers
 - `GET  /healthz`
 
-Behavior on `stream: true` with `T4T_FAKE_STREAMING=true`: hold the connection, fetch full response, then emit SSE chunks rapidly to mimic streaming. With `false`: 400.
+Behavior on `stream: true` with `T4T_FAKE_STREAMING=true`: SSE headers are flushed immediately and the gateway opens a `<think>` block at the head of the assistant turn (the de-facto reasoning-content convention used by DeepSeek R1, o1, QwQ et al.), then emits a bullet line for each lifecycle event (`selecting_provider`, `provider_selected`, `posting_job`, `job_posted`, `notifying_provider`, `provider_acked`, `awaiting_delivery`, `delivered`) as it happens. Every chat client that supports reasoning models — Open WebUI, LibreChat, Continue, Cline, Cursor, Big-AGI — already renders `<think>` as a collapsed "thinking" section visually distinct from the assistant answer, giving the two-message UX (status + AI response) inside the OpenAI single-message-per-request protocol. A `: keepalive` SSE comment is sent every 10s so reverse-proxy / fetch idle timeouts don't kill the connection during the multi-second T4T round-trip. After delivery, if the model's response itself starts with a `<think>…</think>` block (reasoning models), it's spliced into the gateway's thinking block so the user sees one unified collapsed panel ("network status + model reasoning") rather than two stacked ones; the model's actual answer follows the merged `</think>`. The response is emitted as a single `chat.completion.chunk` delta (the response arrives from Swarm as one finalized blob — there's nothing to actually token-stream), followed by `data: [DONE]`. Errors are appended inside the thinking block, the block is closed, and the stream ends normally (no dropped socket).
+
+When the request signals **structured output** — `response_format.type` is set to anything other than `text` (e.g. `json_object`, `json_schema`), or `tools` is non-empty — the `<think>` wrapper is suppressed entirely. The assistant `delta.content` will be exactly what the provider produced (parseable JSON, tool-call payload, etc.) so headless agents (Cline, OpenCode, Aider, raw OpenAI SDK with JSON mode) can consume the response without reasoning-tag noise. SSE keepalive comments still flow during the wait so the connection survives the round-trip. Round-trip errors set `finish_reason: 'error'` on the terminal chunk instead of injecting markdown into content.
+
+With `T4T_FAKE_STREAMING=false`: 400.
 
 ### 7.3 Provider mode
 
