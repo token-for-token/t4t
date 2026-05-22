@@ -112,4 +112,17 @@ export interface ResponsePayload {
   ts: number
 }
 
+/** Lifecycle events emitted by the gateway while servicing a chat request.
+ *  Surfaced to the SSE stream so clients (Open WebUI, agents) get continuous
+ *  feedback instead of an idle socket that may exceed their read timeout. */
+export type ProgressEvent =
+  | {kind: 'selecting_provider'; modelId: string}
+  | {kind: 'provider_selected'; provider: Hex; modelId: string}
+  | {kind: 'posting_job'; provider: Hex; maxPayment: string}
+  | {kind: 'job_posted'; txHash: Hex; onChainJobId: Hex}
+  | {kind: 'notifying_provider'; provider: Hex}
+  | {kind: 'provider_acked'; estimatedCompletion: number}
+  | {kind: 'awaiting_delivery'}
+  | {kind: 'delivered'; promptTokens: number | null; completionTokens: number | null}
+
 export type SignMessage = (message: string) => Promise<Hex>

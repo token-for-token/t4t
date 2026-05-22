@@ -366,7 +366,7 @@ Exposes:
 - `GET  /v1/models` — lists models available across discovered providers
 - `GET  /healthz`
 
-Behavior on `stream: true` with `T4T_FAKE_STREAMING=true`: hold the connection, fetch full response, then emit SSE chunks rapidly to mimic streaming. With `false`: 400.
+Behavior on `stream: true` with `T4T_FAKE_STREAMING=true`: SSE headers are flushed immediately and the gateway writes a markdown-blockquote line for each lifecycle event (`selecting_provider`, `provider_selected`, `posting_job`, `job_posted`, `notifying_provider`, `provider_acked`, `awaiting_delivery`, `delivered`) as it happens, plus a `: keepalive` comment every 10s so reverse-proxy / fetch idle timeouts don't kill the connection during the multi-second T4T round-trip. After delivery, the actual completion content streams as `chat.completion.chunk` deltas, followed by `data: [DONE]`. Errors are surfaced as a final blockquote chunk and a normal stream close, not a dropped socket. With `false`: 400.
 
 ### 7.3 Provider mode
 

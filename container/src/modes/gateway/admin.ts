@@ -6,7 +6,7 @@ import {sendXbzz, sendXdai} from '../../lib/chain'
 import type {GatewayJobRow, JobsDb} from '../../lib/jobs-db'
 import type {Logger} from '../../lib/logger'
 import type {ModelDiscovery} from './models'
-import type {OpenAIChatRequest, OpenAIChatResponse} from '../../lib/types'
+import type {OpenAIChatRequest, OpenAIChatResponse, ProgressEvent} from '../../lib/types'
 import {attachClientApi} from './server'
 import {
   GATEWAY_TABS,
@@ -41,8 +41,13 @@ export interface GatewayAdminDeps {
   pendingCount: () => number
   /** Enable OpenAI-style "fake" SSE streaming on /v1/chat/completions. */
   fakeStreaming: boolean
-  /** OpenAI handler: posts the t4t job and returns the completion. */
-  handleChat: (req: OpenAIChatRequest) => Promise<OpenAIChatResponse>
+  /** OpenAI handler: posts the t4t job and returns the completion. The
+   *  optional `onProgress` callback receives lifecycle events as the request
+   *  moves through provider selection, on-chain posting, and PSS delivery. */
+  handleChat: (
+    req: OpenAIChatRequest,
+    onProgress?: (e: ProgressEvent) => void,
+  ) => Promise<OpenAIChatResponse>
   /** OpenAI handler: returns the discovered model union. */
   listModels: () => Promise<Array<{id: string; object: 'model'; created: number; owned_by: string}>>
   logger: Logger
