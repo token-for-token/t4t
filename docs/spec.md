@@ -128,7 +128,7 @@ struct ModelOffering {
     string  modelId;          // e.g. "llama3:70b-instruct-q4_K_M"
     uint128 inputPricePerMillionTokens;   // xBZZ wei per 1M prompt tokens
     uint128 outputPricePerMillionTokens;  // xBZZ wei per 1M completion tokens
-    uint128 maxContextTokens;
+    uint128 maxContextTokens; // AI tokens (prompt+completion). 0 = unspecified — gateway skips the filter
     uint64  maxLatencySeconds; // declared SLA
 }
 
@@ -358,6 +358,7 @@ Additional env:
 | `T4T_HTTP_PORT` | `8080` | OpenAI-compatible API port |
 | `T4T_SELECTION_STRATEGY` | `top_rep_cheapest` | `cheapest`, `top_rep_cheapest`, `manual` |
 | `T4T_MAX_PRICE_PER_MILLION_TOKENS` | unset | upper bound on (input + output) xBZZ wei per 1M tokens combined |
+| (derived per request) | — | Provider selection also drops offerings whose declared `maxContextTokens` is below a rough `prompt_tokens + max_tokens` estimate. Offerings with `maxContextTokens == 0` (i.e. provider didn't declare a window) bypass this filter rather than being silently excluded. |
 | `T4T_DEFAULT_DEADLINE_SECONDS` | `300` | per-job |
 | `T4T_FAKE_STREAMING` | `true` | emulate SSE for `stream: true` |
 
@@ -377,14 +378,14 @@ With `T4T_FAKE_STREAMING=false`: 400.
 Additional env:
 | Variable | Default | Description |
 |---|---|---|
-| `T4T_ENDPOINTS_FILE` | `${T4T_DATA_DIR}/endpoints.json` | Path to a JSON array of `{name, url, apiKey?, models?}` entries describing every OpenAI-compatible inference backend the provider routes to (Ollama, vLLM, LiteLLM, llama.cpp, OpenAI, …). At least one entry required. The optional `models` block declares per-million-token prices (BZZ decimals, keyed by the backend-native model id); declared prices win over on-chain values on startup, models discovered from `/v1/models` are auto-added on first boot, and Admin-UI edits are mirrored back into the file atomically. If two backends advertise the same model id, each is registered on-chain as `<endpoint-name>/<modelId>` so the operator can publish independent prices; the provider rewrites `model` to the backend-native id before calling out. Models served by a single backend keep their bare id. |
+| `T4T_ENDPOINTS_FILE` | `${T4T_DATA_DIR}/endpoints.json` | Path to a JSON array of `{name, url, apiKey?, models?}` entries describing every OpenAI-compatible inference backend the provider routes to (Ollama, vLLM, LiteLLM, llama.cpp, OpenAI, …). At least one entry required. The optional `models` block, keyed by the backend-native model id, declares per-million-token prices (`inputBzz`/`outputBzz` as BZZ decimals) and an optional `contextWindow` (integer AI tokens, mirrored on-chain as `maxContextTokens` so gateways skip providers whose window is too small for a request). Declared values win over on-chain values on startup; models discovered from `/v1/models` are auto-added on first boot, picking up a `context_window` / `max_model_len` / `max_input_tokens` field from the backend when present; Admin-UI edits are mirrored back into the file atomically. If two backends advertise the same model id, each is registered on-chain as `<endpoint-name>/<modelId>` so the operator can publish independent prices; the provider rewrites `model` to the backend-native id before calling out. Models served by a single backend keep their bare id. |
 | `T4T_INPUT_PRICE_DEFAULT` | required | xBZZ wei per 1M prompt tokens, applied to newly-discovered models only. Per-model prices live on-chain in `ModelOffering.inputPricePerMillionTokens` and are editable from the admin UI. |
 | `T4T_OUTPUT_PRICE_DEFAULT` | required | xBZZ wei per 1M completion tokens, same semantics as the input default. |
 | `T4T_HEARTBEAT_INTERVAL_SECONDS` | `300` | |
 | `T4T_MAX_CONCURRENT_JOBS` | `2` | |
 
 Behavior:
-1. On start: read state, register if needed, load the endpoints file, query each backend's `GET /v1/models` and aggregate the unique model ids, read existing on-chain offerings, build merged set (preserve any per-model prices already on-chain; apply `T4T_INPUT_PRICE_DEFAULT` and `T4T_OUTPUT_PRICE_DEFAULT` to newly-seen models), publish via `updateOfferings` only if the merged set differs from chain, begin heartbeat loop. To stop serving a model, remove it from the backend (or drop the backend from `endpoints.json`) and restart. To change a model's prices, use the admin UI's Models page (writes via `updateOfferings`). At claim time: `actualPayment = (inputPrice·promptTokens + outputPrice·completionTokens) / 1_000_000`.
+1. On start: read state, register if needed, load the endpoints file, query each backend's `GET /v1/models` and aggregate the unique model ids (also harvesting `context_window` / `max_model_len` / `max_input_tokens` when reported), read existing on-chain offerings, build merged set (preserve any per-model prices already on-chain; apply `T4T_INPUT_PRICE_DEFAULT` and `T4T_OUTPUT_PRICE_DEFAULT` to newly-seen models; resolve `maxContextTokens` from `endpoints.json` → backend-reported → on-chain prior → 0), publish via `updateOfferings` only if the merged set differs from chain, begin heartbeat loop. To stop serving a model, remove it from the backend (or drop the backend from `endpoints.json`) and restart. To change a model's prices, use the admin UI's Models page (writes via `updateOfferings`). At claim time: `actualPayment = (inputPrice·promptTokens + outputPrice·completionTokens) / 1_000_000`.
 2. Subscribe to `t4t:provider:<address>`.
 3. On `job_notify`: validate registry pricing matches, ACK within `ACK_WINDOW / 2`.
 4. Fetch + decrypt request, look up the backend serving `modelId`, call its `/v1/chat/completions`, encrypt + upload response, send `job_deliver`.

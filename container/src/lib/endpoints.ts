@@ -9,9 +9,14 @@ const BzzAmount = z.string().refine(s => {
   return frac.length <= 16
 }, 'must be a non-negative BZZ decimal with at most 16 fractional digits')
 
-const PriceSchema = z.object({
+const ModelEntrySchema = z.object({
   inputBzz: BzzAmount,
   outputBzz: BzzAmount,
+  // Maximum prompt+completion AI tokens the backend can serve for this model.
+  // Mirrored on-chain as `ModelOffering.maxContextTokens` so the gateway can
+  // skip providers whose ceiling is too low for a given request. Optional —
+  // omit (or set 0) to mean "unspecified, gateway will not filter".
+  contextWindow: z.number().int().nonnegative().optional(),
 })
 
 const EndpointSchema = z.object({
@@ -25,11 +30,12 @@ const EndpointSchema = z.object({
   url: z.string().url(),
   // Bearer token. Omit for unauthenticated backends like a local Ollama.
   apiKey: z.string().optional(),
-  // Optional declarative per-model prices, keyed by the **backend-native**
-  // model id (NOT the exposed/prefixed form). BZZ decimal strings — up to 16
-  // fractional digits. UI edits on the Models page are mirrored back here so
-  // operators can hand-edit or version-control prices.
-  models: z.record(PriceSchema).optional(),
+  // Optional declarative per-model entries, keyed by the **backend-native**
+  // model id (NOT the exposed/prefixed form). Prices are BZZ decimal strings —
+  // up to 16 fractional digits. `contextWindow` (AI tokens, integer) is also
+  // mirrored to the on-chain offering. UI edits on the Models page are
+  // mirrored back here so operators can hand-edit or version-control them.
+  models: z.record(ModelEntrySchema).optional(),
 })
 
 const EndpointsSchema = z.array(EndpointSchema).min(1).superRefine((arr, ctx) => {
@@ -43,7 +49,9 @@ const EndpointsSchema = z.array(EndpointSchema).min(1).superRefine((arr, ctx) =>
 })
 
 export type InferenceEndpoint = z.infer<typeof EndpointSchema>
-export type ModelPriceEntry = z.infer<typeof PriceSchema>
+export type ModelEntry = z.infer<typeof ModelEntrySchema>
+/** @deprecated Renamed to ModelEntry. */
+export type ModelPriceEntry = ModelEntry
 
 /** Resolve the on-disk endpoints file path — `T4T_ENDPOINTS_FILE` env wins,
  *  else `${T4T_DATA_DIR}/endpoints.json`. Mirrors `walletKeyFilePath`. */
@@ -101,7 +109,8 @@ export function writeEndpoints(dataDir: string, endpoints: InferenceEndpoint[]):
 
 /** Update an endpoint's `models` block with a single (backendModelId, price)
  *  pair. Returns true if the entry was new or changed, false if the existing
- *  entry already matched. Mutates the passed endpoint. */
+ *  entry already matched. Preserves any other fields (e.g. `contextWindow`)
+ *  already declared for the same model. Mutates the passed endpoint. */
 export function setDeclaredPrice(
   endpoint: InferenceEndpoint,
   backendModelId: string,
@@ -109,12 +118,35 @@ export function setDeclaredPrice(
   outputPlur: bigint,
 ): boolean {
   endpoint.models = endpoint.models ?? {}
-  const next: ModelPriceEntry = {
+  const cur = endpoint.models[backendModelId]
+  const next: ModelEntry = {
+    ...cur,
     inputBzz: plurToBzzExact(inputPlur),
     outputBzz: plurToBzzExact(outputPlur),
   }
-  const cur = endpoint.models[backendModelId]
   if (cur && cur.inputBzz === next.inputBzz && cur.outputBzz === next.outputBzz) return false
+  endpoint.models[backendModelId] = next
+  return true
+}
+
+/** Update an endpoint's `models` block with a context-window value. Returns
+ *  true if the entry was new or changed. Preserves prices already declared
+ *  for the same model. A zero (or undefined) value clears the field —
+ *  signalling "unspecified" so the gateway will not filter on it. */
+export function setDeclaredContextWindow(
+  endpoint: InferenceEndpoint,
+  backendModelId: string,
+  contextWindow: number | undefined,
+): boolean {
+  endpoint.models = endpoint.models ?? {}
+  const cur = endpoint.models[backendModelId]
+  const normalised = contextWindow && contextWindow > 0 ? contextWindow : undefined
+  if ((cur?.contextWindow ?? undefined) === normalised) return false
+  const next: ModelEntry = {
+    inputBzz: cur?.inputBzz ?? '0',
+    outputBzz: cur?.outputBzz ?? '0',
+  }
+  if (normalised !== undefined) next.contextWindow = normalised
   endpoint.models[backendModelId] = next
   return true
 }

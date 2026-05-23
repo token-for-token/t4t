@@ -9,12 +9,29 @@ export interface SelectionContext {
   modelId: string
   /** Optional cap on (input + output) xBZZ wei per 1M tokens combined. */
   maxPrice?: bigint
+  /** Minimum context window the offering must declare to be selectable.
+   *  Computed by the gateway from the request (prompt + max_tokens). An
+   *  offering with `maxContextTokens === 0n` is treated as "unspecified"
+   *  and passes the filter — providers who don't declare a window opt out
+   *  of this safety check rather than being silently excluded. */
+  minContextTokens?: bigint
   /** Required when strategy = 'manual'. */
   manualProvider?: Address
 }
 
 function combinedPrice(o: ModelOffering): bigint {
   return o.inputPricePerMillionTokens + o.outputPricePerMillionTokens
+}
+
+function fits(o: ModelOffering, ctx: SelectionContext): boolean {
+  if (ctx.maxPrice !== undefined && combinedPrice(o) > ctx.maxPrice) return false
+  if (
+    ctx.minContextTokens !== undefined &&
+    o.maxContextTokens > 0n &&
+    o.maxContextTokens < ctx.minContextTokens
+  )
+    return false
+  return true
 }
 
 export interface CandidateProvider {
@@ -53,11 +70,7 @@ export async function selectProvider(
       if (!provider.active) continue
       if (!isHeartbeatFresh(provider.lastHeartbeat, now)) continue
       const offerings = await getOfferings(chain, provider.owner)
-      const offering = offerings.find(
-        o =>
-          o.modelId === ctx.modelId &&
-          (ctx.maxPrice === undefined || combinedPrice(o) <= ctx.maxPrice),
-      )
+      const offering = offerings.find(o => o.modelId === ctx.modelId && fits(o, ctx))
       if (offering) candidates.push({provider, offering})
     }
     if (nextCursor === cursor || page.length === 0) break
@@ -78,9 +91,7 @@ async function matchOffering(
   ctx: SelectionContext,
 ): Promise<CandidateProvider | null> {
   const offerings = await getOfferings(chain, owner)
-  const offering = offerings.find(
-    o => o.modelId === ctx.modelId && (ctx.maxPrice === undefined || combinedPrice(o) <= ctx.maxPrice),
-  )
+  const offering = offerings.find(o => o.modelId === ctx.modelId && fits(o, ctx))
   if (!offering) return null
   const {page} = await listProviders(chain, 0n, 1n)
   // We don't strictly need the row for manual mode, so synthesize the parts

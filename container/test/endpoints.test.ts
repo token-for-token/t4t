@@ -7,6 +7,7 @@ import {
   endpointsFilePath,
   loadEndpoints,
   plurToBzzExact,
+  setDeclaredContextWindow,
   setDeclaredPrice,
   writeEndpoints,
   type InferenceEndpoint,
@@ -131,6 +132,41 @@ describe('loadEndpoints', () => {
     expect(() => loadEndpoints(dir)).toThrow(/at most 16 fractional digits/)
   })
 
+  it('accepts a models block with a contextWindow field', () => {
+    writeFileSync(
+      join(dir, 'endpoints.json'),
+      JSON.stringify([
+        {
+          name: 'openai',
+          url: 'https://api.openai.com',
+          models: {
+            'gpt-4o-mini': {inputBzz: '0.3', outputBzz: '1.5', contextWindow: 128000},
+          },
+        },
+      ]),
+    )
+    const eps = loadEndpoints(dir)
+    expect(eps[0]!.models!['gpt-4o-mini']).toEqual({
+      inputBzz: '0.3',
+      outputBzz: '1.5',
+      contextWindow: 128000,
+    })
+  })
+
+  it('rejects a negative contextWindow', () => {
+    writeFileSync(
+      join(dir, 'endpoints.json'),
+      JSON.stringify([
+        {
+          name: 'openai',
+          url: 'https://api.openai.com',
+          models: {gpt: {inputBzz: '0', outputBzz: '0', contextWindow: -1}},
+        },
+      ]),
+    )
+    expect(() => loadEndpoints(dir)).toThrow(EndpointsFileError)
+  })
+
   it('rejects a non-decimal price string', () => {
     writeFileSync(
       join(dir, 'endpoints.json'),
@@ -190,6 +226,60 @@ describe('setDeclaredPrice', () => {
     const changed = setDeclaredPrice(ep, 'llama3', 3_000_000_000_000_000n, 15_000_000_000_000_000n)
     expect(changed).toBe(true)
     expect(ep.models!.llama3).toEqual({inputBzz: '0.3', outputBzz: '1.5'})
+  })
+
+  it('preserves an existing contextWindow when only the price changes', () => {
+    const ep: InferenceEndpoint = {
+      name: 'openai',
+      url: 'https://api.openai.com',
+      models: {'gpt-4o-mini': {inputBzz: '0.1', outputBzz: '0.2', contextWindow: 128000}},
+    }
+    setDeclaredPrice(ep, 'gpt-4o-mini', 3_000_000_000_000_000n, 15_000_000_000_000_000n)
+    expect(ep.models!['gpt-4o-mini']).toEqual({
+      inputBzz: '0.3',
+      outputBzz: '1.5',
+      contextWindow: 128000,
+    })
+  })
+})
+
+describe('setDeclaredContextWindow', () => {
+  it('initializes the entry with placeholder prices and reports a change', () => {
+    const ep: InferenceEndpoint = {name: 'ollama', url: 'http://ollama:11434'}
+    const changed = setDeclaredContextWindow(ep, 'llama3', 8192)
+    expect(changed).toBe(true)
+    expect(ep.models!.llama3).toEqual({inputBzz: '0', outputBzz: '0', contextWindow: 8192})
+  })
+
+  it('preserves prices when set on a model with existing prices', () => {
+    const ep: InferenceEndpoint = {
+      name: 'ollama',
+      url: 'http://ollama:11434',
+      models: {llama3: {inputBzz: '0.3', outputBzz: '1.5'}},
+    }
+    const changed = setDeclaredContextWindow(ep, 'llama3', 8192)
+    expect(changed).toBe(true)
+    expect(ep.models!.llama3).toEqual({inputBzz: '0.3', outputBzz: '1.5', contextWindow: 8192})
+  })
+
+  it('returns false when the existing contextWindow already matches', () => {
+    const ep: InferenceEndpoint = {
+      name: 'ollama',
+      url: 'http://ollama:11434',
+      models: {llama3: {inputBzz: '0.3', outputBzz: '1.5', contextWindow: 8192}},
+    }
+    expect(setDeclaredContextWindow(ep, 'llama3', 8192)).toBe(false)
+  })
+
+  it('clears the field when passed undefined or zero', () => {
+    const ep: InferenceEndpoint = {
+      name: 'ollama',
+      url: 'http://ollama:11434',
+      models: {llama3: {inputBzz: '0.3', outputBzz: '1.5', contextWindow: 8192}},
+    }
+    expect(setDeclaredContextWindow(ep, 'llama3', undefined)).toBe(true)
+    expect(ep.models!.llama3).toEqual({inputBzz: '0.3', outputBzz: '1.5'})
+    expect(setDeclaredContextWindow(ep, 'llama3', 0)).toBe(false)
   })
 })
 

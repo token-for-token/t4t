@@ -564,9 +564,18 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     onProgress?: (e: ProgressEvent) => void,
   ): Promise<OpenAIChatResponse> {
     onProgress?.({kind: 'selecting_provider', modelId: req.model})
+    // Rough prompt-token estimate (~4 chars/token, +4 per message for role
+    // framing). Without a tokenizer this overshoots common cases but stays
+    // cheap. Combined with `max_tokens` it forms the floor we require the
+    // provider's declared context window to clear — offerings with a window
+    // smaller than this are dropped in `selectProvider`.
+    const maxTokens = BigInt(req.max_tokens ?? 1024)
+    const promptChars = req.messages.reduce((n, m) => n + m.role.length + m.content.length + 4, 0)
+    const promptTokensApprox = BigInt(Math.ceil(promptChars / 4))
     const target = await selectProvider(chain, cfg.T4T_SELECTION_STRATEGY, {
       modelId: req.model,
       maxPrice: cfg.T4T_MAX_PRICE_PER_MILLION_TOKENS,
+      minContextTokens: promptTokensApprox + maxTokens,
       manualProvider: cfg.T4T_MANUAL_PROVIDER,
     })
     if (!target) throw new Error(`no provider matches model=${req.model}`)
@@ -576,7 +585,6 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     // shorter, this overshoots safely) and budget at the full split rate, plus
     // one million-tokens worth of headroom on each side to absorb usage drift.
     // The provider only claims the actual amount; the contract refunds the rest.
-    const maxTokens = BigInt(req.max_tokens ?? 1024)
     const headroom = 1_000_000n
     const inPay = target.offering.inputPricePerMillionTokens * (maxTokens + headroom)
     const outPay = target.offering.outputPricePerMillionTokens * (maxTokens + headroom)

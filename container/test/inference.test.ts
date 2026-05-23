@@ -120,6 +120,45 @@ describe('InferenceRouter.listModels', () => {
     expect(body.model).toBe('llama3')
   })
 
+  it('picks up the context window when the backend reports one (multiple field names)', async () => {
+    mockFetch(url => {
+      // Mix of backend dialects: LiteLLM (context_window), vLLM (max_model_len),
+      // OpenRouter (max_input_tokens), and Ollama (no field at all).
+      if (url === 'http://litellm/v1/models')
+        return jsonResponse({data: [{id: 'gpt-4o-mini', context_window: 128000}]})
+      if (url === 'http://vllm/v1/models')
+        return jsonResponse({data: [{id: 'llama3-70b', max_model_len: 8192}]})
+      if (url === 'http://openrouter/v1/models')
+        return jsonResponse({data: [{id: 'sonnet', max_input_tokens: 200000}]})
+      if (url === 'http://ollama/v1/models') return jsonResponse({data: [{id: 'mistral'}]})
+      throw new Error(`unexpected url ${url}`)
+    })
+    const router = new InferenceRouter(
+      [
+        new InferenceClient('litellm', 'http://litellm'),
+        new InferenceClient('vllm', 'http://vllm'),
+        new InferenceClient('openrouter', 'http://openrouter'),
+        new InferenceClient('ollama', 'http://ollama'),
+      ],
+      silentLogger() as never,
+    )
+    await router.listModels()
+    expect(router.contextWindowFor('gpt-4o-mini')).toBe(128000)
+    expect(router.contextWindowFor('llama3-70b')).toBe(8192)
+    expect(router.contextWindowFor('sonnet')).toBe(200000)
+    expect(router.contextWindowFor('mistral')).toBeUndefined()
+  })
+
+  it('returns undefined for an unknown exposed id', async () => {
+    mockFetch(() => jsonResponse({data: []}))
+    const router = new InferenceRouter(
+      [new InferenceClient('ollama', 'http://ollama')],
+      silentLogger() as never,
+    )
+    await router.listModels()
+    expect(router.contextWindowFor('nope')).toBeUndefined()
+  })
+
   it('skips endpoints whose listModels throws, keeps the rest live', async () => {
     mockFetch(url => {
       if (url === 'http://broken/v1/models') return new Response('boom', {status: 503})

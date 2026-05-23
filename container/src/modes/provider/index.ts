@@ -31,6 +31,7 @@ import {
   EndpointsFileError,
   endpointsFilePath,
   loadEndpoints,
+  setDeclaredContextWindow,
   setDeclaredPrice,
   writeEndpoints,
   type InferenceEndpoint,
@@ -280,14 +281,18 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
   // even if the chain read fails.
   const onChainOfferings = await getOfferings(chain, chain.address).catch(() => [] as ModelOffering[])
   const existingByModel = new Map(onChainOfferings.map(o => [o.modelId, o]))
-  function declaredPriceFor(exposedId: string): {inputPlur: bigint; outputPlur: bigint} | null {
+  function declaredEntryFor(exposedId: string): {inputPlur: bigint; outputPlur: bigint; contextWindow?: number} | null {
     const route = inference.routeFor(exposedId)
     if (!route) return null
     const endpoint = endpoints.find(e => e.name === route.endpointName)
     const declared = endpoint?.models?.[route.backendModelId]
     if (!declared) return null
     try {
-      return {inputPlur: parseBzzToPlur(declared.inputBzz), outputPlur: parseBzzToPlur(declared.outputBzz)}
+      return {
+        inputPlur: parseBzzToPlur(declared.inputBzz),
+        outputPlur: parseBzzToPlur(declared.outputBzz),
+        contextWindow: declared.contextWindow,
+      }
     } catch (err) {
       log.warn({err, exposedId}, 'declared price in endpoints.json is invalid; ignoring')
       return null
@@ -295,14 +300,26 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
   }
   function resolveOffering(modelId: string): ModelOffering {
     const prior = existingByModel.get(modelId)
-    const declared = declaredPriceFor(modelId)
+    const declared = declaredEntryFor(modelId)
+    // Context window precedence (high → low): endpoints.json declared →
+    // backend-reported (`/v1/models`) → on-chain prior → 0n (= unspecified).
+    // Gateways treat 0n as "no constraint" so an operator can opt out by
+    // setting `contextWindow: 0` (or simply omitting the field) — useful for
+    // ragged backends like Ollama whose `/v1/models` is silent on the field.
+    const fromBackend = inference.contextWindowFor(modelId)
+    const maxContextTokens =
+      declared?.contextWindow !== undefined
+        ? BigInt(declared.contextWindow)
+        : fromBackend !== undefined
+          ? BigInt(fromBackend)
+          : prior?.maxContextTokens ?? 0n
     return {
       modelId,
       inputPricePerMillionTokens:
         declared?.inputPlur ?? prior?.inputPricePerMillionTokens ?? cfg.T4T_INPUT_PRICE_DEFAULT,
       outputPricePerMillionTokens:
         declared?.outputPlur ?? prior?.outputPricePerMillionTokens ?? cfg.T4T_OUTPUT_PRICE_DEFAULT,
-      maxContextTokens: prior?.maxContextTokens ?? 0n,
+      maxContextTokens,
       maxLatencySeconds: prior?.maxLatencySeconds ?? 120n,
     }
   }
@@ -353,6 +370,12 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
       ) {
         dirty = true
       }
+      // Mirror the resolved context window too so an operator inspecting
+      // endpoints.json can see (and override) the value the provider is
+      // publishing. Skip when the resolved value is 0n — leaves the file
+      // silent rather than serialising a meaningless zero.
+      const ctx = offering.maxContextTokens === 0n ? undefined : Number(offering.maxContextTokens)
+      if (setDeclaredContextWindow(endpoint, route.backendModelId, ctx)) dirty = true
     }
     if (!dirty) return
     try {
@@ -388,7 +411,8 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
       return (
         cur &&
         cur.inputPricePerMillionTokens === o.inputPricePerMillionTokens &&
-        cur.outputPricePerMillionTokens === o.outputPricePerMillionTokens
+        cur.outputPricePerMillionTokens === o.outputPricePerMillionTokens &&
+        cur.maxContextTokens === o.maxContextTokens
       )
     })
   if (!sameAsChain) await publishOfferings()
@@ -411,6 +435,7 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
       if (!cur) return true
       if (cur.inputPricePerMillionTokens !== n.inputPricePerMillionTokens) return true
       if (cur.outputPricePerMillionTokens !== n.outputPricePerMillionTokens) return true
+      if (cur.maxContextTokens !== n.maxContextTokens) return true
     }
     return false
   }

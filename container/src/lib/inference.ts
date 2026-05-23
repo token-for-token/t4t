@@ -37,10 +37,23 @@ export class InferenceClient {
   }
 
   async listModels(): Promise<string[]> {
+    return (await this.listModelsDetailed()).map(m => m.id)
+  }
+
+  /** Like `listModels()` but also returns each model's advertised context
+   *  window when the backend includes it on `/v1/models`. Field name varies:
+   *  LiteLLM/OpenRouter use `context_window`, vLLM uses `max_model_len`,
+   *  Ollama doesn't expose it on `/v1/models` at all. Returns `undefined`
+   *  for any backend that omits it — caller decides whether to fall back to
+   *  a declared value or treat as unspecified. */
+  async listModelsDetailed(): Promise<Array<{id: string; contextWindow?: number}>> {
     const res = await fetch(`${this.baseUrl}/v1/models`, {headers: this.headers()})
     if (!res.ok) throw new Error(`inference backend ${this.name} list ${res.status}`)
-    const data = (await res.json()) as {data?: Array<{id: string}>}
-    return (data.data ?? []).map(m => m.id)
+    const data = (await res.json()) as {data?: Array<Record<string, unknown>>}
+    return (data.data ?? []).map(m => ({
+      id: String(m.id),
+      contextWindow: pickContextWindow(m),
+    }))
   }
 
   /** Minimal chat completion used as a liveness probe for a specific model.
@@ -75,8 +88,36 @@ export class InferenceClient {
  * An endpoint whose `/v1/models` call fails is skipped for that round — one
  * broken backend should not silently disable the others.
  */
+/** Pulls a context-window value out of an OpenAI-style `/v1/models` entry.
+ *  Tries the field names different backends use (LiteLLM, OpenRouter, vLLM,
+ *  Ollama with `OLLAMA_CONTEXT_LENGTH`) and falls back to undefined. */
+function pickContextWindow(m: Record<string, unknown>): number | undefined {
+  const candidates = [
+    m.context_window,
+    m.max_model_len,
+    m.max_input_tokens,
+    m.context_length,
+  ]
+  for (const v of candidates) {
+    if (typeof v === 'number' && Number.isFinite(v) && Number.isInteger(v) && v > 0) return v
+    if (typeof v === 'string') {
+      const n = Number(v)
+      if (Number.isFinite(n) && Number.isInteger(n) && n > 0) return n
+    }
+  }
+  return undefined
+}
+
+interface RouteEntry {
+  client: InferenceClient
+  backendModelId: string
+  /** Context window as reported by `/v1/models`, when present. Treated as a
+   *  fallback by the provider — endpoints.json overrides this. */
+  contextWindow?: number
+}
+
 export class InferenceRouter {
-  private routing = new Map<string, {client: InferenceClient; backendModelId: string}>()
+  private routing = new Map<string, RouteEntry>()
 
   constructor(
     readonly clients: InferenceClient[],
@@ -86,33 +127,34 @@ export class InferenceRouter {
   /** Aggregated, namespaced model list across all reachable endpoints.
    *  Side-effect: refreshes the internal routing map. */
   async listModels(): Promise<string[]> {
-    const byModel = new Map<string, InferenceClient[]>()
+    const byModel = new Map<string, Array<{client: InferenceClient; contextWindow?: number}>>()
     for (const c of this.clients) {
-      let ids: string[]
+      let infos: Array<{id: string; contextWindow?: number}>
       try {
-        ids = await c.listModels()
+        infos = await c.listModelsDetailed()
       } catch (err) {
         this.logger.warn({err, endpoint: c.name}, 'listModels failed; skipping endpoint this round')
         continue
       }
-      for (const id of ids) {
-        const list = byModel.get(id) ?? []
-        list.push(c)
-        byModel.set(id, list)
+      for (const info of infos) {
+        const list = byModel.get(info.id) ?? []
+        list.push({client: c, contextWindow: info.contextWindow})
+        byModel.set(info.id, list)
       }
     }
 
-    const next = new Map<string, {client: InferenceClient; backendModelId: string}>()
-    for (const [modelId, clients] of byModel) {
-      if (clients.length === 1) {
-        this.assign(next, modelId, clients[0]!, modelId)
+    const next = new Map<string, RouteEntry>()
+    for (const [modelId, entries] of byModel) {
+      if (entries.length === 1) {
+        const e = entries[0]!
+        this.assign(next, modelId, e.client, modelId, e.contextWindow)
         continue
       }
       this.logger.info(
-        {modelId, endpoints: clients.map(c => c.name)},
+        {modelId, endpoints: entries.map(e => e.client.name)},
         'model offered by multiple endpoints; registering each with endpoint prefix',
       )
-      for (const c of clients) this.assign(next, `${c.name}/${modelId}`, c, modelId)
+      for (const e of entries) this.assign(next, `${e.client.name}/${modelId}`, e.client, modelId, e.contextWindow)
     }
     this.routing = next
     return [...next.keys()]
@@ -121,10 +163,11 @@ export class InferenceRouter {
   /** Insert into the routing map, warning if the exposed id is already taken
    *  (e.g. an HF-style "meta-llama/foo" colliding with a prefix-built id). */
   private assign(
-    map: Map<string, {client: InferenceClient; backendModelId: string}>,
+    map: Map<string, RouteEntry>,
     exposedId: string,
     client: InferenceClient,
     backendModelId: string,
+    contextWindow?: number,
   ): void {
     const prev = map.get(exposedId)
     if (prev) {
@@ -134,7 +177,7 @@ export class InferenceRouter {
       )
       return
     }
-    map.set(exposedId, {client, backendModelId})
+    map.set(exposedId, {client, backendModelId, contextWindow})
   }
 
   /** Returns the endpoint name currently serving a model, or null if unknown. */
@@ -150,6 +193,14 @@ export class InferenceRouter {
     const e = this.routing.get(exposedId)
     if (!e) return null
     return {endpointName: e.client.name, backendModelId: e.backendModelId}
+  }
+
+  /** Context window the backend reported for an exposed model id on the most
+   *  recent `listModels()` call, or `undefined` if the backend didn't include
+   *  it (e.g. Ollama, vanilla OpenAI). Used as a fallback by the provider
+   *  when no value is declared in endpoints.json. */
+  contextWindowFor(exposedId: string): number | undefined {
+    return this.routing.get(exposedId)?.contextWindow
   }
 
   async chatCompletion(req: OpenAIChatRequest): Promise<OpenAIChatResponse> {
