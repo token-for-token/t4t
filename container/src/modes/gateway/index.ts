@@ -19,6 +19,7 @@ import {JobsDb} from '../../lib/jobs-db'
 import {loadOrCreatePssKey} from '../../lib/keys'
 import {selectProviderWithDetail, type CandidateProvider} from './selector'
 import {startAdminServer} from './admin'
+import {computeMaxPayment} from '../../lib/token-budget'
 import type {
   Hex,
   JobAckBody,
@@ -616,15 +617,16 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     const target = await selectWithCapacityWait(req.model, onProgress)
     onProgress?.({kind: 'provider_selected', provider: target.provider.owner, modelId: req.model})
 
-    // Conservative ceiling: assume prompt tokens ≈ max_tokens (most prompts are
-    // shorter, this overshoots safely) and budget at the full split rate, plus
-    // one million-tokens worth of headroom on each side to absorb usage drift.
-    // The provider only claims the actual amount; the contract refunds the rest.
-    const maxTokens = BigInt(req.max_tokens ?? 1024)
-    const headroom = 1_000_000n
-    const inPay = target.offering.inputPricePerMillionTokens * (maxTokens + headroom)
-    const outPay = target.offering.outputPricePerMillionTokens * (maxTokens + headroom)
-    const maxPayment = (inPay + outPay) / 1_000_000n
+    // Size the escrow off the actual prompt (estimated chars/4) and either the
+    // requested `max_tokens` or `T4T_DEFAULT_MAX_OUTPUT_TOKENS`, padded by
+    // T4T_ESCROW_HEADROOM_RATIO. The provider only claims the actual usage —
+    // unused budget is refunded by the contract. Throws EscrowCapExceededError
+    // when T4T_MAX_ESCROW_PER_JOB is set and the request would breach it.
+    const {maxPayment} = computeMaxPayment(req, target.offering, {
+      defaultMaxOutputTokens: cfg.T4T_DEFAULT_MAX_OUTPUT_TOKENS,
+      headroomPpm: BigInt(Math.round(cfg.T4T_ESCROW_HEADROOM_RATIO * 1_000_000)),
+      maxEscrowPerJob: cfg.T4T_MAX_ESCROW_PER_JOB ?? null,
+    })
     await ensureAllowance(chain, cfg.ESCROW_ADDRESS, maxPayment)
 
     const jobIdLocal = toHex(crypto.getRandomValues(new Uint8Array(32)))
