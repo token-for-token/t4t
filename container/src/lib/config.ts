@@ -111,6 +111,22 @@ const Gateway = Common.extend({
   T4T_MIN_PROVIDERS_PER_MODEL: z.coerce.number().int().positive().default(1),
   T4T_PERSIST_PAYLOADS: BoolFlag.default('false'),
   T4T_PAYLOAD_RETENTION_HOURS: z.coerce.number().int().positive().default(24),
+  // Fallback completion-token cap when the request omits `max_tokens`. Sizes
+  // the per-job escrow on the output side. Default 16384 covers GPT-4o /
+  // Claude 3.5 class models; bump it for long-output proxies (GPT-5, Gemini
+  // 2.x, reasoning models). The provider only claims the actual usage —
+  // unused budget is refunded by the contract.
+  T4T_DEFAULT_MAX_OUTPUT_TOKENS: z.coerce.bigint().default(16_384n),
+  // Multiplicative safety buffer applied to both prompt and completion token
+  // budgets when sizing the escrow. 0.2 = +20%. Padding absorbs tokenizer
+  // drift (we estimate prompt tokens via chars/4) and small response
+  // overruns. Stored as parts-per-million internally.
+  T4T_ESCROW_HEADROOM_RATIO: z.coerce.number().min(0).max(10).default(0.2),
+  // Optional per-job escrow ceiling (xBZZ wei). When set, the gateway
+  // rejects a chat request with HTTP 413 if the computed maxPayment would
+  // exceed this value, instead of locking that much xBZZ on-chain. Leave
+  // unset to defer to wallet balance / allowance for the upper bound.
+  T4T_MAX_ESCROW_PER_JOB: z.coerce.bigint().optional(),
 })
 
 const Provider = Common.extend({
