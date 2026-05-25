@@ -4,6 +4,7 @@ import {
   EscrowCapExceededError,
   computeMaxPayment,
   estimatePromptTokens,
+  maxAffordableCompletionTokens,
   type ModelPricing,
   type TokenBudgetConfig,
 } from '../src/lib/token-budget'
@@ -126,5 +127,59 @@ describe('computeMaxPayment', () => {
       expect((e as EscrowCapExceededError).httpStatus).toBe(413)
       expect((e as EscrowCapExceededError).cap).toBe(1n)
     }
+  })
+})
+
+describe('maxAffordableCompletionTokens', () => {
+  const PRICE_1_BZZ_PER_M = 1_000_000_000_000_000n // 1 BZZ wei / 1M tokens
+
+  it('solves for the completion cap that exactly fits the budget', () => {
+    // 2 BZZ escrow, 1k prompt @ 1 BZZ/M, 1 BZZ/M out → 2e15·1e6 = 2e21
+    // promptCost = 1e15·1000 = 1e18. remaining = 2e21 - 1e18 = 1.999e21.
+    // cap = 1.999e21 / 1e15 = 1_999_000
+    const cap = maxAffordableCompletionTokens({
+      maxPayment: 2_000_000_000_000_000n,
+      promptTokenCeiling: 1000n,
+      inputPricePerMillionTokens: PRICE_1_BZZ_PER_M,
+      outputPricePerMillionTokens: PRICE_1_BZZ_PER_M,
+    })
+    expect(cap).toBe(1_999_000n)
+  })
+
+  it('returns 0 when the prompt alone exhausts the budget', () => {
+    const cap = maxAffordableCompletionTokens({
+      maxPayment: 1_000n,
+      promptTokenCeiling: 1_000_000n,
+      inputPricePerMillionTokens: PRICE_1_BZZ_PER_M,
+      outputPricePerMillionTokens: PRICE_1_BZZ_PER_M,
+    })
+    expect(cap).toBe(0n)
+  })
+
+  it('returns -1n (uncapped) for a zero-price output model', () => {
+    const cap = maxAffordableCompletionTokens({
+      maxPayment: 100n,
+      promptTokenCeiling: 50n,
+      inputPricePerMillionTokens: PRICE_1_BZZ_PER_M,
+      outputPricePerMillionTokens: 0n,
+    })
+    expect(cap).toBe(-1n)
+  })
+
+  it('floors the cap so the contract-side actualWei stays within maxPayment', () => {
+    // Set up a budget where the integer division would round down meaningfully.
+    const maxPayment = 1_000_001n
+    const inPrice = PRICE_1_BZZ_PER_M
+    const outPrice = 3n
+    const promptCeiling = 0n
+    const cap = maxAffordableCompletionTokens({
+      maxPayment,
+      promptTokenCeiling: promptCeiling,
+      inputPricePerMillionTokens: inPrice,
+      outputPricePerMillionTokens: outPrice,
+    })
+    // Verify the rounded cap fits: (inPrice·prompt + outPrice·cap)/1e6 ≤ maxPayment.
+    const actualWei = (inPrice * promptCeiling + outPrice * cap) / 1_000_000n
+    expect(actualWei).toBeLessThanOrEqual(maxPayment)
   })
 })
