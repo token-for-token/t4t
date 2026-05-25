@@ -74,6 +74,9 @@ services:
       # T4T_FAKE_STREAMING: "true"                      # default — chunk response gateway-side
       # T4T_ALLOWED_MODELS: "qwen2.5:0.5b,llama3.2:3b"  # comma-separated allow-list
       # T4T_MIN_PROVIDERS_PER_MODEL: "1"                # default
+      # T4T_DEFAULT_MAX_OUTPUT_TOKENS: "16384"          # default — fallback completion cap when request omits max_tokens
+      # T4T_ESCROW_HEADROOM_RATIO: "0.2"                # default — +20% safety buffer on prompt+output token budgets
+      # T4T_MAX_ESCROW_PER_JOB: "50000000000000000"     # 5 BZZ per-job ceiling; unset = no cap, defers to wallet balance
       # T4T_ADMIN_HOST: "0.0.0.0"
       # T4T_ADMIN_PORT: "3000"
     ports:

@@ -360,6 +360,9 @@ Additional env:
 | `T4T_MAX_PRICE_PER_MILLION_TOKENS` | unset | upper bound on (input + output) xBZZ wei per 1M tokens combined |
 | `T4T_DEFAULT_DEADLINE_SECONDS` | `300` | per-job |
 | `T4T_FAKE_STREAMING` | `true` | emulate SSE for `stream: true` |
+| `T4T_DEFAULT_MAX_OUTPUT_TOKENS` | `16384` | fallback completion cap when request omits `max_tokens`; sizes the escrow output side |
+| `T4T_ESCROW_HEADROOM_RATIO` | `0.2` | multiplicative safety buffer on prompt+output token budgets when sizing `maxPayment` |
+| `T4T_MAX_ESCROW_PER_JOB` | unset | hard per-job escrow ceiling (xBZZ wei); requests that would exceed it get HTTP 413 |
 
 Exposes:
 - `POST /v1/chat/completions` — OpenAI-compatible

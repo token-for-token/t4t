@@ -4,12 +4,14 @@ import type {Logger} from '../../lib/logger'
 import {InferenceRouter} from '../../lib/inference'
 import type {PssTransport} from '../../lib/swarm'
 import {downloadChunk, uploadChunk} from '../../lib/swarm'
+import {estimatePromptTokens, maxAffordableCompletionTokens} from '../../lib/token-budget'
 import type {Bee} from '@ethersphere/bee-js'
 import type {
   Hex,
   JobAckBody,
   JobDeliverBody,
   JobNotifyBody,
+  OpenAIChatRequest,
   RequestPayload,
   ResponsePayload,
 } from '../../lib/types'
@@ -41,6 +43,13 @@ export interface WorkerDeps {
   onDelivered: (args: {jobIdRouting: Hex; responseHash: string; promptTokens: number; completionTokens: number}) => Promise<void>
   /** Optional persistence hook called at each lifecycle stage. */
   onProgress?: (p: WorkerProgress) => void
+  /** Resolve per-model pricing so the worker can cap `max_tokens` to whatever
+   *  the on-chain `maxPayment` actually pays for. Returning null disables the
+   *  cap for that model (e.g. when prices aren't known locally). */
+  pricingFor: (modelId: string) => {
+    inputPricePerMillionTokens: bigint
+    outputPricePerMillionTokens: bigint
+  } | null
   logger: Logger
 }
 
@@ -92,8 +101,13 @@ export async function processJob(deps: WorkerDeps, notify: Envelope<JobNotifyBod
     throw new Error(`model mismatch: envelope=${body.modelId} payload=${reqPayload.openaiRequest.model}`)
   }
 
-  // 3. Run inference.
-  const openaiResponse = await deps.inference.chatCompletion(reqPayload.openaiRequest)
+  // 3. Cap `max_tokens` to whatever the on-chain escrow actually pays for,
+  //    then run inference. If the gateway under-sized the escrow we'd rather
+  //    deliver a shorter answer than overshoot — the contract rejects claims
+  //    above `maxPayment` (PaymentTooHigh), which would otherwise force the
+  //    job to time out and slash the provider for an honest workload.
+  const cappedRequest = capRequestToBudget(reqPayload.openaiRequest, body, deps, log)
+  const openaiResponse = await deps.inference.chatCompletion(cappedRequest)
   log.info({completionTokens: openaiResponse.usage?.completion_tokens}, 'inference complete')
   deps.onProgress?.({
     stage: 'inferred',
@@ -152,4 +166,65 @@ export async function processJob(deps: WorkerDeps, notify: Envelope<JobNotifyBod
     promptTokens: openaiResponse.usage?.prompt_tokens ?? 0,
     completionTokens: openaiResponse.usage?.completion_tokens ?? 0,
   })
+}
+
+/** Clamp the request's `max_tokens` to whatever the on-chain `maxPayment`
+ *  pays for at the provider's declared prices. We over-estimate prompt
+ *  tokens (chars/4 + per-message overhead via `estimatePromptTokens`) so the
+ *  derived completion cap stays conservative — the contract's cost check is
+ *  the hard wall and we want our claim to land below it on the first try. */
+function capRequestToBudget(
+  req: OpenAIChatRequest,
+  notify: JobNotifyBody,
+  deps: WorkerDeps,
+  log: Logger,
+): OpenAIChatRequest {
+  const pricing = deps.pricingFor(notify.modelId)
+  if (!pricing) return req
+  const maxPayment = (() => {
+    try {
+      return BigInt(notify.maxPayment)
+    } catch {
+      return null
+    }
+  })()
+  if (maxPayment === null || maxPayment <= 0n) return req
+
+  const promptCeiling = estimatePromptTokens(req)
+  const affordable = maxAffordableCompletionTokens({
+    maxPayment,
+    promptTokenCeiling: promptCeiling,
+    inputPricePerMillionTokens: pricing.inputPricePerMillionTokens,
+    outputPricePerMillionTokens: pricing.outputPricePerMillionTokens,
+  })
+  if (affordable < 0n) return req // unpriced — no derivable cap
+  if (affordable === 0n) {
+    // The escrow doesn't cover even one output token at the estimated prompt
+    // size. Letting inference run would either return nothing or overshoot —
+    // refuse so the job times out cleanly instead of producing garbage.
+    throw new Error(
+      `escrow too small to fit any output (prompt estimate ${promptCeiling} tokens, ` +
+        `maxPayment ${maxPayment} wei xBZZ exhausted by prompt at declared prices)`,
+    )
+  }
+
+  // BigInt → number is safe here: a single chat completion's max_tokens is
+  // bounded by model context (≤ 2^20 in practice), well under MAX_SAFE_INTEGER.
+  const cap = affordable > BigInt(Number.MAX_SAFE_INTEGER)
+    ? Number.MAX_SAFE_INTEGER
+    : Number(affordable)
+  const requested = req.max_tokens
+  if (requested != null && requested <= cap) return req
+  if (requested != null) {
+    log.warn(
+      {requested, cap, maxPayment: maxPayment.toString(), promptCeiling: promptCeiling.toString()},
+      'capping max_tokens to fit on-chain escrow budget',
+    )
+  } else {
+    log.info(
+      {cap, maxPayment: maxPayment.toString(), promptCeiling: promptCeiling.toString()},
+      'request omitted max_tokens; setting cap from on-chain escrow budget',
+    )
+  }
+  return {...req, max_tokens: cap}
 }
