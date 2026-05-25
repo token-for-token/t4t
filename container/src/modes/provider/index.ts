@@ -13,6 +13,7 @@ import {
   getOfferings,
   getProvider,
   makeChain,
+  readJob,
   readMinStake,
   readXbzzBalance,
   registerProvider,
@@ -553,6 +554,14 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
             cipher,
             selfAddress: chain.address,
             signMessage,
+            pricingFor: (modelId: string) => {
+              const o = offeringsByModel.get(modelId)
+              if (!o) return null
+              return {
+                inputPricePerMillionTokens: o.inputPricePerMillionTokens,
+                outputPricePerMillionTokens: o.outputPricePerMillionTokens,
+              }
+            },
             onDelivered: async ({jobIdRouting: routing, responseHash, promptTokens, completionTokens}) => {
               const onChainJobId = await waitForOnChainJobId(jobIndex, routing)
               if (!onChainJobId) {
@@ -579,12 +588,30 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
               const actual =
                 (inPrice * BigInt(promptTokens) + outPrice * BigInt(completionTokens)) /
                 1_000_000n
+              // Belt to the suspenders from the in-worker max_tokens cap:
+              // a backend that ignored max_tokens (some don't) can still
+              // overshoot. Re-read the on-chain maxPayment so the gateway
+              // can't trick us via a tampered notify, then clip — we'd
+              // rather collect maxPayment than revert with PaymentTooHigh
+              // and get slashed at the delivery deadline.
+              const onChain = await readJob(chain, onChainJobId).catch(err => {
+                log.warn({err, onChainJobId}, 'readJob failed; falling back to notify.maxPayment')
+                return null
+              })
+              const ceiling = onChain?.maxPayment ?? BigInt(env.body.maxPayment)
+              const clipped = actual > ceiling ? ceiling : actual
+              if (clipped !== actual) {
+                log.warn(
+                  {onChainJobId, actual: actual.toString(), ceiling: ceiling.toString()},
+                  'clipping actualPayment to on-chain maxPayment to avoid PaymentTooHigh',
+                )
+              }
               await claimJob(chain, {
                 jobId: onChainJobId,
                 responseHash: ('0x' + responseHash) as Hex,
-                actualPayment: actual,
+                actualPayment: clipped,
               })
-              log.info({onChainJobId, actual: actual.toString()}, 'claim submitted')
+              log.info({onChainJobId, actual: clipped.toString()}, 'claim submitted')
               db.recordProviderJob({
                 jobId: jobIdRouting,
                 client: env.from,
@@ -596,7 +623,7 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
                 claimedAt: Math.floor(Date.now() / 1000),
                 promptTokens: null,
                 completionTokens: null,
-                earnedXBZZ: actual.toString(),
+                earnedXBZZ: clipped.toString(),
                 errorMessage: null,
               })
             },

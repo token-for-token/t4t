@@ -98,3 +98,25 @@ export function computeMaxPayment(
     maxPayment,
   }
 }
+
+/** Maximum completion tokens the provider can serve for `maxPayment` given a
+ *  (conservatively over-estimated) prompt token count. Inverts the contract's
+ *  cost formula `actualWei = (inPrice·prompt + outPrice·completion) / 1e6`
+ *  to solve for `completion ≤ (maxPayment·1e6 − inPrice·promptCeil) / outPrice`,
+ *  rounded down so `actualWei ≤ maxPayment` is guaranteed when the backend
+ *  honors `max_tokens`. Returns 0n when the prompt alone already exhausts the
+ *  escrow — the caller should treat that as "refuse the job", not "serve zero
+ *  tokens", since a 0-token completion is rarely a useful answer. */
+export function maxAffordableCompletionTokens(args: {
+  maxPayment: bigint
+  promptTokenCeiling: bigint
+  inputPricePerMillionTokens: bigint
+  outputPricePerMillionTokens: bigint
+}): bigint {
+  // A free model is uncappable from cost — defer to the caller's own ceiling.
+  if (args.outputPricePerMillionTokens === 0n) return -1n
+  const budgetWei = args.maxPayment * 1_000_000n
+  const promptCostWei = args.inputPricePerMillionTokens * args.promptTokenCeiling
+  if (promptCostWei >= budgetWei) return 0n
+  return (budgetWei - promptCostWei) / args.outputPricePerMillionTokens
+}
