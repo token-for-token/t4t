@@ -111,6 +111,14 @@ const Gateway = Common.extend({
   T4T_MIN_PROVIDERS_PER_MODEL: z.coerce.number().int().positive().default(1),
   T4T_PERSIST_PAYLOADS: BoolFlag.default('false'),
   T4T_PAYLOAD_RETENTION_HOURS: z.coerce.number().int().positive().default(24),
+  // When every candidate provider is at its advertised concurrency cap, the
+  // gateway waits up to this many seconds (re-polling the registry) for one
+  // to free a slot before failing the request. 0 = fail fast.
+  T4T_PROVIDER_WAIT_SECONDS: z.coerce.number().int().nonnegative().default(120),
+  // Poll interval used while waiting on capacity. Bounded below so a wide
+  // wait window doesn't spam the RPC; bounded above so a freshly-freed slot
+  // gets noticed quickly.
+  T4T_PROVIDER_WAIT_POLL_SECONDS: z.coerce.number().int().positive().default(5),
 })
 
 const Provider = Common.extend({

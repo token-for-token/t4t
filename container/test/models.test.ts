@@ -15,6 +15,7 @@ function mkProvider(over: Partial<ProviderRow> = {}): ProviderRow {
     totalJobs: 0,
     successfulJobs: 0,
     active: true,
+    maxConcurrentJobs: 0,
     ...over,
   }
 }

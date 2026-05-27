@@ -107,6 +107,29 @@ export async function updateOfferings(c: ChainClient, offerings: ModelOffering[]
   return hash
 }
 
+export async function setMaxConcurrentJobs(c: ChainClient, cap: number): Promise<Hex> {
+  const hash = await c.wallet.writeContract({
+    chain: c.wallet.chain!,
+    account: c.wallet.account!,
+    address: c.registry,
+    abi: providerRegistryAbi,
+    functionName: 'setMaxConcurrentJobs',
+    args: [cap],
+  })
+  emit(c, {kind: 'setMaxConcurrentJobs', hash, toAddress: c.registry, note: `cap=${cap}`})
+  return hash
+}
+
+export async function getOpenJobs(c: ChainClient, owner: Address): Promise<number> {
+  const raw = (await c.pub.readContract({
+    address: c.registry,
+    abi: providerRegistryAbi,
+    functionName: 'openJobs',
+    args: [owner],
+  })) as bigint | number
+  return Number(raw)
+}
+
 export async function sendHeartbeat(c: ChainClient): Promise<Hex> {
   const hash = await c.wallet.writeContract({
     chain: c.wallet.chain!,

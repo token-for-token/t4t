@@ -22,6 +22,7 @@ export const providerRegistryAbi = [
           {name: 'totalJobs', type: 'uint32'},
           {name: 'successfulJobs', type: 'uint32'},
           {name: 'active', type: 'bool'},
+          {name: 'maxConcurrentJobs', type: 'uint32'},
         ],
       },
       {name: 'nextCursor', type: 'uint256'},

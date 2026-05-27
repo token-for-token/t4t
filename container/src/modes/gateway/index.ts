@@ -17,7 +17,7 @@ import {signEnvelope, clientTopic, providerTopic} from '../../lib/envelope'
 import {EciesCipher, jsonDecrypt, jsonEncrypt} from '../../lib/crypto'
 import {JobsDb} from '../../lib/jobs-db'
 import {loadOrCreatePssKey} from '../../lib/keys'
-import {selectProvider} from './selector'
+import {selectProviderWithDetail, type CandidateProvider} from './selector'
 import {startAdminServer} from './admin'
 import type {
   Hex,
@@ -559,17 +559,61 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
     },
   })
 
+  /** Pick a provider, waiting up to `T4T_PROVIDER_WAIT_SECONDS` for one to
+   *  free a slot if every match for `modelId` is currently at its advertised
+   *  `maxConcurrentJobs`. Re-polls the registry every
+   *  `T4T_PROVIDER_WAIT_POLL_SECONDS`; emits `waiting_for_capacity` progress
+   *  events so the SSE client sees what's happening. */
+  async function selectWithCapacityWait(
+    modelId: string,
+    onProgress?: (e: ProgressEvent) => void,
+  ): Promise<CandidateProvider> {
+    const startedAt = Date.now()
+    const ctx = {
+      modelId,
+      maxPrice: cfg.T4T_MAX_PRICE_PER_MILLION_TOKENS,
+      manualProvider: cfg.T4T_MANUAL_PROVIDER,
+    }
+    while (true) {
+      const {chosen, matches, busy} = await selectProviderWithDetail(
+        chain,
+        cfg.T4T_SELECTION_STRATEGY,
+        ctx,
+      )
+      if (chosen) return chosen
+      const waitedSeconds = Math.floor((Date.now() - startedAt) / 1000)
+      // No match at all → no point waiting. The registry isn't going to
+      // sprout a new provider mid-request.
+      if (matches.length === 0) {
+        throw new Error(`no provider matches model=${modelId}`)
+      }
+      // All matches are at capacity. Wait if the operator allows it.
+      if (waitedSeconds >= cfg.T4T_PROVIDER_WAIT_SECONDS) {
+        throw new Error(
+          `all ${busy.length} provider(s) for model=${modelId} are at capacity ` +
+            `(waited ${waitedSeconds}s, limit ${cfg.T4T_PROVIDER_WAIT_SECONDS}s)`,
+        )
+      }
+      onProgress?.({
+        kind: 'waiting_for_capacity',
+        modelId,
+        busyProviders: busy.length,
+        waitedSeconds,
+      })
+      log.info(
+        {modelId, busyProviders: busy.length, waitedSeconds, totalBudget: cfg.T4T_PROVIDER_WAIT_SECONDS},
+        'all matching providers at capacity; waiting for a free slot',
+      )
+      await new Promise(resolve => setTimeout(resolve, cfg.T4T_PROVIDER_WAIT_POLL_SECONDS * 1000))
+    }
+  }
+
   async function handleChat(
     req: OpenAIChatRequest,
     onProgress?: (e: ProgressEvent) => void,
   ): Promise<OpenAIChatResponse> {
     onProgress?.({kind: 'selecting_provider', modelId: req.model})
-    const target = await selectProvider(chain, cfg.T4T_SELECTION_STRATEGY, {
-      modelId: req.model,
-      maxPrice: cfg.T4T_MAX_PRICE_PER_MILLION_TOKENS,
-      manualProvider: cfg.T4T_MANUAL_PROVIDER,
-    })
-    if (!target) throw new Error(`no provider matches model=${req.model}`)
+    const target = await selectWithCapacityWait(req.model, onProgress)
     onProgress?.({kind: 'provider_selected', provider: target.provider.owner, modelId: req.model})
 
     // Conservative ceiling: assume prompt tokens ≈ max_tokens (most prompts are

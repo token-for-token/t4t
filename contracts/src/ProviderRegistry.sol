@@ -18,6 +18,11 @@ contract ProviderRegistry {
         uint32  totalJobs;
         uint32  successfulJobs;
         bool    active;
+        // Advertised concurrency cap. Soft hint read by gateways during
+        // selection; the contract's hard cap is still the stake collateral
+        // check in JobEscrow.postJob. 0 == unset/unlimited so existing
+        // providers stay routable until they publish a value.
+        uint32  maxConcurrentJobs;
     }
 
     struct ModelOffering {
@@ -63,6 +68,7 @@ contract ProviderRegistry {
     event StakeWithdrawn(address indexed owner, uint128 amount);
     event StakeAdded(address indexed owner, uint128 amount);
     event EscrowSet(address indexed escrow);
+    event MaxConcurrentJobsUpdated(address indexed owner, uint32 cap);
 
     error EscrowAlreadySet();
     error NotEscrow();
@@ -118,7 +124,8 @@ contract ProviderRegistry {
             lastHeartbeat: uint64(block.timestamp),
             totalJobs: 0,
             successfulJobs: 0,
-            active: true
+            active: true,
+            maxConcurrentJobs: 0
         });
         _list.push(msg.sender);
         emit ProviderRegistered(msg.sender, pssPublicKey);
@@ -144,6 +151,15 @@ contract ProviderRegistry {
         if (_providers[msg.sender].owner == address(0)) revert NotRegistered();
         _providers[msg.sender].lastHeartbeat = uint64(block.timestamp);
         emit Heartbeat(msg.sender, uint64(block.timestamp));
+    }
+
+    /// @notice Provider publishes its concurrency cap so gateways can route
+    ///         around it once `openJobs` saturates. Set to 0 to mean
+    ///         "unset/unlimited" (selectors fall back to ignoring the cap).
+    function setMaxConcurrentJobs(uint32 cap) external {
+        if (_providers[msg.sender].owner == address(0)) revert NotRegistered();
+        _providers[msg.sender].maxConcurrentJobs = cap;
+        emit MaxConcurrentJobsUpdated(msg.sender, cap);
     }
 
     function deactivate() external {
