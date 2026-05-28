@@ -36,6 +36,11 @@ export interface JobNotifyBody {
   clientPssPubKey: Hex
   /** Gateway's Bee overlay for PSS routing. */
   clientSwarmOverlay: Hex
+  /** Optional HTTPS URL the provider may POST ack/deliver envelopes to,
+   *  for clients (like the hosted gateway) where reverse-direction PSS
+   *  delivery isn't reliable. The provider trusts this because the
+   *  envelope is signed by the gateway's on-chain wallet. */
+  clientReplyUrl?: string
 }
 
 export interface JobAckBody {

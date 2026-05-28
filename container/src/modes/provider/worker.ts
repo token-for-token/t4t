@@ -46,6 +46,46 @@ export interface WorkerDeps {
 
 const PROTOCOL_VERSION = 1 as const
 
+/**
+ * Deliver a signed envelope back to the gateway. Prefers the gateway-supplied
+ * HTTPS `clientReplyUrl` when present (hosted-gateway path — Bee 2.8's reverse
+ * push-routing is unreliable across NAT-asymmetric peers), and falls back to
+ * PSS otherwise. The receiving side verifies the envelope signature either
+ * way, so the trust model is unchanged.
+ */
+async function sendEnvelopeToClient(
+  deps: WorkerDeps,
+  replyUrl: string | undefined,
+  args: {
+    topic: string
+    recipientOverlay: Hex
+    recipientPssKey: Hex
+    envelope: Envelope
+    log: Logger
+  },
+): Promise<void> {
+  if (replyUrl) {
+    try {
+      const res = await fetch(replyUrl, {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify(args.envelope),
+      })
+      if (res.ok) return
+      const text = await res.text().catch(() => '')
+      args.log.warn({status: res.status, replyUrl, body: text.slice(0, 200)}, 'replyUrl POST failed — falling back to PSS')
+    } catch (err) {
+      args.log.warn({err: (err as Error).message, replyUrl}, 'replyUrl POST threw — falling back to PSS')
+    }
+  }
+  await deps.pss.send({
+    topic: args.topic,
+    recipientOverlay: args.recipientOverlay,
+    recipientPssKey: args.recipientPssKey,
+    envelope: args.envelope,
+  })
+}
+
 /** Execute a single job end-to-end: fetch → infer → upload → notify. */
 export async function processJob(deps: WorkerDeps, notify: Envelope<JobNotifyBody>): Promise<void> {
   const {body} = notify
@@ -70,11 +110,12 @@ export async function processJob(deps: WorkerDeps, notify: Envelope<JobNotifyBod
     pssPublicKey: body.clientPssPubKey,
     swarmOverlay: body.clientSwarmOverlay,
   }
-  await deps.pss.send({
+  await sendEnvelopeToClient(deps, body.clientReplyUrl, {
     topic: clientTopic(notify.from),
     recipientOverlay: clientPeer.swarmOverlay,
     recipientPssKey: clientPeer.pssPublicKey,
     envelope: ackEnv,
+    log,
   })
   log.info('acked')
   deps.onProgress?.({
@@ -126,11 +167,12 @@ export async function processJob(deps: WorkerDeps, notify: Envelope<JobNotifyBod
     },
     deps.signMessage,
   )
-  await deps.pss.send({
+  await sendEnvelopeToClient(deps, body.clientReplyUrl, {
     topic: clientTopic(notify.from),
     recipientOverlay: clientPeer.swarmOverlay,
     recipientPssKey: clientPeer.pssPublicKey,
     envelope: deliverEnv,
+    log,
   })
   log.info({responseHash}, 'delivered')
   deps.onProgress?.({
