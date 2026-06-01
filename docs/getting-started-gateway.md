@@ -33,6 +33,9 @@ Set these env vars (or put them in `.env`):
 | `T4T_SELECTION_STRATEGY` | `top_rep_cheapest` |
 | `T4T_DEFAULT_DEADLINE_SECONDS` | `300` |
 | `T4T_FAKE_STREAMING` | `true` |
+| `T4T_DEFAULT_MAX_OUTPUT_TOKENS` | `16384` (fallback completion cap when request omits `max_tokens`) |
+| `T4T_ESCROW_HEADROOM_RATIO` | `0.2` (multiplicative buffer on the per-job escrow) |
+| `T4T_MAX_ESCROW_PER_JOB` | unset (hard per-job escrow ceiling, xBZZ wei; HTTP 413 if exceeded) |
 
 ## 3. Run
 
