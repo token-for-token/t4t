@@ -65,6 +65,9 @@ export interface ProviderRow {
   totalJobs: number
   successfulJobs: number
   active: boolean
+  /** Provider-advertised concurrency cap. 0 means "unset" — selectors should
+   *  treat it as "no published limit, route normally." */
+  maxConcurrentJobs: number
 }
 
 export interface ModelOffering {
@@ -122,6 +125,7 @@ export interface ResponsePayload {
  *  feedback instead of an idle socket that may exceed their read timeout. */
 export type ProgressEvent =
   | {kind: 'selecting_provider'; modelId: string}
+  | {kind: 'waiting_for_capacity'; modelId: string; busyProviders: number; waitedSeconds: number}
   | {kind: 'provider_selected'; provider: Hex; modelId: string}
   | {kind: 'posting_job'; provider: Hex; maxPayment: string}
   | {kind: 'job_posted'; txHash: Hex; onChainJobId: Hex}

@@ -294,7 +294,42 @@ contract ProviderRegistryTest is Test {
         assertEq(registry.isLive(provider), expected);
     }
 
+    // ----------------------------------------------------------------
+    //   maxConcurrentJobs
+    // ----------------------------------------------------------------
+
+    function test_register_initializesMaxConcurrentJobsToZero() public {
+        _register();
+        assertEq(uint256(registry.getProvider(provider).maxConcurrentJobs), 0);
+    }
+
+    function test_setMaxConcurrentJobs_updatesAndEmits() public {
+        _register();
+        vm.expectEmit(true, false, false, true);
+        emit MaxConcurrentJobsUpdated(provider, 4);
+        vm.prank(provider);
+        registry.setMaxConcurrentJobs(4);
+        assertEq(uint256(registry.getProvider(provider).maxConcurrentJobs), 4);
+    }
+
+    function test_setMaxConcurrentJobs_acceptsZeroAsUnlimited() public {
+        _register();
+        vm.prank(provider);
+        registry.setMaxConcurrentJobs(2);
+        vm.prank(provider);
+        registry.setMaxConcurrentJobs(0);
+        assertEq(uint256(registry.getProvider(provider).maxConcurrentJobs), 0);
+    }
+
+    function test_setMaxConcurrentJobs_revertsForUnregistered() public {
+        address other = makeAddr("ghost");
+        vm.prank(other);
+        vm.expectRevert(ProviderRegistry.NotRegistered.selector);
+        registry.setMaxConcurrentJobs(2);
+    }
+
     // Mirror the contract events so vm.expectEmit can match them by signature.
     event ProviderRegistered(address indexed owner, bytes32 pssPubKey);
     event StakeAdded(address indexed owner, uint128 amount);
+    event MaxConcurrentJobsUpdated(address indexed owner, uint32 cap);
 }

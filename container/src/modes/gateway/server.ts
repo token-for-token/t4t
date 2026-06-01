@@ -240,6 +240,8 @@ function renderProgress(e: ProgressEvent): string | null {
   switch (e.kind) {
     case 'selecting_provider':
       return `- selecting provider for \`${escapeMarkdown(e.modelId)}\`…\n`
+    case 'waiting_for_capacity':
+      return `- all ${e.busyProviders} provider(s) for \`${escapeMarkdown(e.modelId)}\` are busy; waiting (${e.waitedSeconds}s)…\n`
     case 'provider_selected':
       return `- provider \`${shortHex(e.provider)}\` selected\n`
     case 'posting_job':

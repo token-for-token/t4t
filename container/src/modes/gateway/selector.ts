@@ -1,6 +1,6 @@
 import type {Address} from 'viem'
 import type {ChainClient} from '../../lib/chain'
-import {getOfferings, listProviders} from '../../lib/chain'
+import {getOfferings, getOpenJobs, listProviders} from '../../lib/chain'
 import type {ModelOffering, ProviderRow} from '../../lib/types'
 
 export type SelectionStrategy = 'cheapest' | 'top_rep_cheapest' | 'manual'
@@ -20,6 +20,12 @@ function combinedPrice(o: ModelOffering): bigint {
 export interface CandidateProvider {
   provider: ProviderRow
   offering: ModelOffering
+  /** Current on-chain in-flight job count for this provider. */
+  openJobs: number
+  /** True if `openJobs >= maxConcurrentJobs` and the provider published a cap.
+   *  Selectors use this to skip the candidate without filtering it out of the
+   *  pool entirely — the gateway's wait loop needs to know how many are busy. */
+  atCapacity: boolean
 }
 
 const MIN_TOTAL_JOBS = 20
@@ -33,18 +39,47 @@ const HEARTBEAT_TTL_SECONDS = 600
 /**
  * Pull the active provider set, filter to those that offer the requested model
  * within budget, then rank per the selected strategy. See spec §8.
+ *
+ * Returns the best **available** candidate (under its advertised capacity). If
+ * every match is at capacity, returns `null` and the caller's wait loop
+ * (see `selectProviderWithDetail`) re-polls. For richer fallback / wait
+ * decisions, callers should use `selectProviderWithDetail` instead.
  */
 export async function selectProvider(
   chain: ChainClient,
   strategy: SelectionStrategy,
   ctx: SelectionContext,
 ): Promise<CandidateProvider | null> {
+  const {chosen} = await selectProviderWithDetail(chain, strategy, ctx)
+  return chosen
+}
+
+export interface SelectionResult {
+  /** Picked candidate, or null if no available provider after filtering. */
+  chosen: CandidateProvider | null
+  /** All matches for the model, regardless of capacity — lets the caller
+   *  decide whether to wait (some at capacity, eventually free) or fail
+   *  fast (zero matches). */
+  matches: CandidateProvider[]
+  /** Subset of `matches` whose `atCapacity` is true. */
+  busy: CandidateProvider[]
+}
+
+export async function selectProviderWithDetail(
+  chain: ChainClient,
+  strategy: SelectionStrategy,
+  ctx: SelectionContext,
+): Promise<SelectionResult> {
   if (strategy === 'manual') {
     if (!ctx.manualProvider) throw new Error('manual strategy requires T4T_MANUAL_PROVIDER')
-    return matchOffering(chain, ctx.manualProvider, ctx)
+    const c = await matchOffering(chain, ctx.manualProvider, ctx)
+    if (!c) return {chosen: null, matches: [], busy: []}
+    const matches = [c]
+    const busy = c.atCapacity ? matches : []
+    return {chosen: c.atCapacity ? null : c, matches, busy}
   }
 
-  const candidates: CandidateProvider[] = []
+  const matches: CandidateProvider[] = []
   const now = Math.floor(Date.now() / 1000)
   let cursor = 0n
   for (let i = 0; i < 20; i++) {
@@ -58,12 +93,28 @@ export async function selectProvider(
           o.modelId === ctx.modelId &&
           (ctx.maxPrice === undefined || combinedPrice(o) <= ctx.maxPrice),
       )
-      if (offering) candidates.push({provider, offering})
+      if (!offering) continue
+      const openJobs = await getOpenJobs(chain, provider.owner).catch(() => 0)
+      const atCapacity = isAtCapacity(provider, openJobs)
+      matches.push({provider, offering, openJobs, atCapacity})
     }
     if (nextCursor === cursor || page.length === 0) break
     cursor = nextCursor
   }
-  return rank(candidates, strategy)
+  const available = matches.filter(c => !c.atCapacity)
+  const busy = matches.filter(c => c.atCapacity)
+  return {chosen: rank(available, strategy), matches, busy}
+}
+
+/** A provider is at capacity when it has published a `maxConcurrentJobs > 0`
+ *  cap and its on-chain `openJobs` has reached or exceeded it. Providers that
+ *  haven't published a cap (legacy default `0`) are treated as routable —
+ *  the contract's stake-collateral check in `JobEscrow.postJob` remains the
+ *  hard backstop in that case. */
+export function isAtCapacity(provider: ProviderRow, openJobs: number): boolean {
+  const cap = provider.maxConcurrentJobs
+  if (!cap || cap === 0) return false
+  return openJobs >= cap
 }
 
 export function isHeartbeatFresh(lastHeartbeat: number | bigint, nowSeconds: number): boolean {
@@ -85,8 +136,9 @@ async function matchOffering(
   const {page} = await listProviders(chain, 0n, 1n)
   // We don't strictly need the row for manual mode, so synthesize the parts
   // the caller cares about from the offerings call.
-  const provider = (page.find(p => p.owner === owner) ?? {owner}) as ProviderRow
-  return {provider, offering}
+  const provider = (page.find(p => p.owner === owner) ?? {owner, maxConcurrentJobs: 0}) as ProviderRow
+  const openJobs = await getOpenJobs(chain, owner).catch(() => 0)
+  return {provider, offering, openJobs, atCapacity: isAtCapacity(provider, openJobs)}
 }
 
 function rank(candidates: CandidateProvider[], strategy: SelectionStrategy): CandidateProvider | null {

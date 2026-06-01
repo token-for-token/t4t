@@ -17,6 +17,7 @@ import {
   readXbzzBalance,
   registerProvider,
   sendHeartbeat,
+  setMaxConcurrentJobs,
   updateOfferings,
   ensureAllowance,
 } from '../../lib/chain'
@@ -242,6 +243,23 @@ export async function startProvider(cfg: ProviderConfig): Promise<void> {
       {onChain: existing.pssPublicKey, local: pssKeys.publicKeyX},
       'on-chain PSS pubkey differs from local key file — incoming jobs will be undecryptable',
     )
+  }
+
+  // Publish concurrency cap so gateways can route around us when our local
+  // queue is full. Re-fetch in case the registry was just populated by the
+  // `register` call above. Only writes when the on-chain value differs to
+  // skip a tx on every restart.
+  try {
+    const current = (await getProvider(chain, chain.address)).maxConcurrentJobs ?? 0
+    if (Number(current) !== cfg.T4T_MAX_CONCURRENT_JOBS) {
+      await setMaxConcurrentJobs(chain, cfg.T4T_MAX_CONCURRENT_JOBS)
+      log.info(
+        {previous: Number(current), cap: cfg.T4T_MAX_CONCURRENT_JOBS},
+        'published maxConcurrentJobs on-chain',
+      )
+    }
+  } catch (err) {
+    log.warn({err}, 'failed to publish maxConcurrentJobs; gateways will treat us as uncapped')
   }
 
   let endpoints: InferenceEndpoint[]
