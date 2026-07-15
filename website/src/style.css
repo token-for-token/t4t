@@ -431,6 +431,22 @@ button:hover { background: var(--ink); color: var(--bg); }
 button:disabled { opacity: 0.4; cursor: default; }
 button:disabled:hover { background: transparent; color: var(--ink); }
 
+.hero-cta-row { margin-top: 20px; }
+.hero-cta {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 10px 20px;
+  border: var(--hair) solid var(--xbzz);
+  color: var(--xbzz);
+  text-decoration: none;
+  transition: all 80ms linear;
+}
+.hero-cta:hover { background: var(--xbzz); color: var(--bg); }
+
 /* ============== GET STARTED ============== */
 .grid2 {
   display: grid;
