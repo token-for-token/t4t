@@ -10,7 +10,7 @@
  * Calls PublicResolver.setContenthash on Ethereum mainnet. The wallet derived
  * from your mnemonic must own the ENS name (or be its authorised manager).
  */
-import {createPublicClient, createWalletClient, http, namehash, parseAbi} from 'viem'
+import {createPublicClient, createWalletClient, http, namehash, parseAbi, parseGwei} from 'viem'
 import {mnemonicToAccount} from 'viem/accounts'
 import {mainnet} from 'viem/chains'
 import {readFileSync} from 'node:fs'
@@ -120,11 +120,18 @@ if (!broadcast) {
 }
 
 console.log('\nBroadcasting…')
+// Pin the next confirmed nonce so a resend REPLACES a stuck pending tx, and
+// set an explicit priority tip — viem's estimate on a quiet mainnet returns a
+// near-zero tip that validators skip, leaving the tx pending indefinitely.
+const nonce = await pub.getTransactionCount({address: account.address, blockTag: 'latest'})
 const txHash = await wallet.writeContract({
   address: resolver,
   abi: resolverAbi,
   functionName: 'setContenthash',
   args: [node, contenthash],
+  nonce,
+  maxPriorityFeePerGas: parseGwei('1'),
+  maxFeePerGas: parseGwei('3'),
 })
 console.log('Tx sent:', txHash)
 console.log('       https://etherscan.io/tx/' + txHash)
