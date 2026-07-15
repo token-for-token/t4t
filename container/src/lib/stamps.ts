@@ -199,11 +199,33 @@ export async function ensureManagedStamp(deps: EnsureStampDeps): Promise<Managed
   // emergency-dilute path the moment a single bucket fills. PSS chunks and
   // ephemeral request/response chunks are write-once-deliver-once for us, so
   // chunk-overwrite (the only practical downside of mutable) is harmless.
-  const batchId = await bee.createPostageBatch(amount, opts.depth, {
-    label: opts.label,
-    waitForUsable: true,
-    immutableFlag: false,
-  })
+  let batchId
+  try {
+    batchId = await bee.createPostageBatch(amount, opts.depth, {
+      label: opts.label,
+      waitForUsable: true,
+      immutableFlag: false,
+    })
+  } catch (err) {
+    // Surface *why* the buy failed — almost always the Bee node's own wallet
+    // is short on BZZ. Log the node wallet balance next to the required cost so
+    // the operator can see the exact shortfall in the logs (xBZZ has 16 dp).
+    const bal = await bee.getWalletBalance().catch(() => null)
+    log.error(
+      {
+        needBzz: (Number(walletCost) / 1e16).toFixed(4),
+        needBzzWei: walletCost.toString(),
+        walletBzz: bal ? bal.bzzBalance.toString() : 'unknown',
+        walletXdai: bal ? bal.nativeTokenBalance.toString() : 'unknown',
+        walletAddress: bal?.walletAddress,
+        depth: opts.depth,
+        ttlDays: opts.ttlDays,
+        errMessage: (err as {message?: string})?.message,
+      },
+      'postage batch purchase failed — Bee node wallet underfunded; fund walletAddress with BZZ',
+    )
+    throw err
+  }
   const idStr = batchId.toString()
   log.info({batchID: idStr}, 'postage batch bought and usable')
   const refreshed = (await listAllBatches(bee)).find(b => b.batchID.toString() === idStr)
