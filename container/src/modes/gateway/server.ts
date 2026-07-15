@@ -56,7 +56,15 @@ export function attachClientApi(app: Express, deps: GatewayApiDeps): void {
       const completion = await deps.handleChat({...body, stream: false})
       res.json(completion)
     } catch (err) {
-      deps.logger.error({err}, 'chat completion failed')
+      const e = err as {status?: number; responseBody?: unknown; url?: string; config?: {url?: string}; message?: string; stack?: string}
+      deps.logger.error({
+        err,
+        errMessage: e?.message,
+        beeStatus: e?.status,
+        beeResponseBody: e?.responseBody,
+        beeUrl: e?.url ?? e?.config?.url,
+        stack: e?.stack,
+      }, 'chat completion failed')
       const status = (err as {httpStatus?: number}).httpStatus ?? 502
       res.status(status).json({error: {message: String(err)}})
     }

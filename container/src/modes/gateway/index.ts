@@ -641,10 +641,24 @@ export async function startGateway(cfg: GatewayConfig): Promise<void> {
       ts: Math.floor(Date.now() / 1000),
     }
     const encrypted = await jsonEncrypt(cipher, target.provider.pssPublicKey, reqPayload)
-    const requestHash = await uploadChunk(
-      {bee, postageBatchId, logger: log},
-      encrypted,
-    )
+    log.info({postageBatchId, bytes: encrypted.length, provider: target.provider.owner, model: req.model}, 'uploading request to swarm')
+    let requestHash: string
+    try {
+      requestHash = await uploadChunk(
+        {bee, postageBatchId, logger: log},
+        encrypted,
+      )
+    } catch (err) {
+      const e = err as {status?: number; responseBody?: unknown; url?: string; config?: {url?: string}; message?: string}
+      log.error({
+        postageBatchId,
+        beeStatus: e?.status,
+        beeResponseBody: e?.responseBody,
+        beeUrl: e?.url ?? e?.config?.url,
+        errMessage: e?.message,
+      }, 'swarm upload of request failed — check the gateway Bee node postage batch')
+      throw err
+    }
 
     const deliveryDeadline = Math.floor(Date.now() / 1000) + cfg.T4T_DEFAULT_DEADLINE_SECONDS
     onProgress?.({kind: 'posting_job', provider: target.provider.owner, maxPayment: maxPayment.toString()})
